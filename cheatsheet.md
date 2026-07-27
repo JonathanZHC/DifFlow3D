@@ -24,6 +24,7 @@ python3 test_difflow3d_superquadrics.py \
   --difflow-num-points 2048 \
   --difflow-iters 4 \
   --difflow-uncertainty 0.2 \
+  --cuda-graph-warmup 10 \
   --warmup 1 \
   --rviz 
 

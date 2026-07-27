@@ -43,7 +43,7 @@ import torch
 
 # Before using, the pcds should be scaled to 1*1*1 m^3 match the real-world dimensions of the scene.
 DIMENSION_FACTOR = 1.0
-MOTION = False
+MOTION = True
 
 
 MotionMode = Literal["static", "sinusoidal", "twist"]
@@ -783,20 +783,24 @@ class PointCloudFrame:
 
 @dataclass(frozen=True)
 class DifFlow3DConfig:
+    """Configuration for the minimal streaming inference path."""
+
     repo_path: Path
     checkpoint_path: Path
     model_module: str = "model_difflow"
-    execution_backend: Literal["eager", "cuda-graph"] = "cuda-graph"
     enable_tf32: bool = True
     cuda_graph_warmup: int = 10
     device: str = "cuda:0"
-    num_points: int = 8192
-    iters: int = 4
-    uncertainty: float = 0.02
+    num_points: int = 2048
+    iters: int = 2
+    uncertainty: float = 0.2
     strict_checkpoint: bool = True
     disable_bn_running_stats: bool = True
     seed: int = 42
+    frame_dt_s: float = 1.0 / 30.0
     max_frame_gap_s: float | None = None
+
+
 
 
 @dataclass(frozen=True)
@@ -818,17 +822,10 @@ class DifFlow3DEstimate:
 
 
 class DifFlow3DInference:
-    """Fast inference adapter for the no-occlusion DifFlow3D checkpoint.
+    """Minimal adapter for the streaming CUDA Graph deployment model.
 
-    The adapter supports two execution backends:
-
-    - ``eager``: optimized model executed normally;
-    - ``cuda-graph``: fixed-shape inference replayed through
-      ``DifFlow3DCudaGraphRunner``.
-
-    Source and target clouds are still sampled independently, matching the
-    repository's NO_CORR=True evaluation protocol. CUDA Graph outputs use
-    static storage and are consumed before the next online inference call.
+    Each physical frame is sampled and encoded once. The sampled target of
+    pair ``(t-1, t)`` is reused as the source of pair ``(t, t+1)``.
     """
 
     required_frames = 2
@@ -839,15 +836,19 @@ class DifFlow3DInference:
         self.num_points = int(config.num_points)
         self._pair_counter = 0
 
+        self._cached_target_timestamp_s: float | None = None
+        self._cached_target_points: np.ndarray | None = None
+        self._cached_target_indices: np.ndarray | None = None
+
         if self.device.type != "cuda":
             raise ValueError(
-                "DifFlow3D PointNet++ operators and CUDA Graph inference "
-                f"require CUDA; received device={self.device}."
+                "DifFlow3D PointNet++ operators require CUDA; "
+                f"received device={self.device}."
             )
-        if self.num_points < 2048:
+        if self.num_points != 2048:
             raise ValueError(
-                "DifFlow3D downsamples its first level to 2048 points; "
-                "--difflow-num-points must be at least 2048."
+                "model_difflow_minimal and its streaming graph runner "
+                "currently require --difflow-num-points 2048."
             )
         if config.iters < 1:
             raise ValueError("--difflow-iters must be positive.")
@@ -855,12 +856,15 @@ class DifFlow3DInference:
             raise ValueError("--difflow-uncertainty must be positive.")
         if config.cuda_graph_warmup < 1:
             raise ValueError("--cuda-graph-warmup must be positive.")
+        if config.frame_dt_s <= 0.0:
+            raise ValueError("frame_dt_s must be positive.")
 
         repo_path = config.repo_path.expanduser().resolve()
         checkpoint_path = config.checkpoint_path.expanduser().resolve()
         module_path = repo_path / (
             config.model_module.replace(".", "/") + ".py"
         )
+
         if not module_path.is_file():
             raise FileNotFoundError(
                 f"DifFlow3D model module was not found: {module_path}."
@@ -885,20 +889,29 @@ class DifFlow3DInference:
             ) from error
 
         model_class = getattr(module, "PointConvBidirection", None)
+        runner_class = getattr(
+            module,
+            "DifFlow3DStreamingCudaGraphRunner",
+            None,
+        )
+        configure_fast = getattr(
+            module,
+            "configure_fast_inference",
+            None,
+        )
+
         if model_class is None:
             raise RuntimeError(
                 f"{config.model_module}.PointConvBidirection was not found."
             )
-
-        configure_fast = getattr(module, "configure_fast_inference", None)
-        if configure_fast is not None:
-            configure_fast(enable_tf32=config.enable_tf32)
-        else:
-            torch.backends.cuda.matmul.allow_tf32 = config.enable_tf32
-            torch.backends.cudnn.allow_tf32 = config.enable_tf32
-            torch.set_float32_matmul_precision(
-                "high" if config.enable_tf32 else "highest"
+        if runner_class is None:
+            raise RuntimeError(
+                f"{config.model_module} does not provide "
+                "DifFlow3DStreamingCudaGraphRunner."
             )
+
+        if configure_fast is not None:
+            configure_fast(config.enable_tf32)
 
         self.model = model_class(iters=config.iters)
         raw_checkpoint: Any = torch.load(
@@ -909,6 +922,7 @@ class DifFlow3DInference:
         state_dict = self._strip_module_prefix(
             self._extract_state_dict(raw_checkpoint)
         )
+
         incompatible = self.model.load_state_dict(
             state_dict,
             strict=config.strict_checkpoint,
@@ -924,7 +938,6 @@ class DifFlow3DInference:
         self.model.to(self.device)
         self.model.eval()
 
-        # Match the repository's evaluate.py behavior before graph capture.
         if config.disable_bn_running_stats:
             for layer in self.model.modules():
                 if isinstance(
@@ -932,6 +945,16 @@ class DifFlow3DInference:
                     (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d),
                 ):
                     layer.track_running_stats = False
+
+        self.runner = runner_class(
+            self.model,
+            batch_size=1,
+            num_points=self.num_points,
+            uncertainty=config.uncertainty,
+            warmup=config.cuda_graph_warmup,
+            enable_tf32=config.enable_tf32,
+            dt_s=config.frame_dt_s,
+        )
 
         shape = (1, self.num_points, 3)
         self._source_host = torch.empty(
@@ -947,50 +970,16 @@ class DifFlow3DInference:
         self._source_host_np = self._source_host[0].numpy()
         self._target_host_np = self._target_host[0].numpy()
 
-        self._source_cuda: torch.Tensor | None = None
-        self._target_cuda: torch.Tensor | None = None
-        self._dummy_gt_flow: torch.Tensor | None = None
-        self.graph_runner = None
-
-        if config.execution_backend == "cuda-graph":
-            runner_class = getattr(
-                module,
-                "DifFlow3DCudaGraphRunner",
-                None,
-            )
-            if runner_class is None:
-                raise RuntimeError(
-                    f"{config.model_module} does not provide "
-                    "DifFlow3DCudaGraphRunner."
-                )
-            self.graph_runner = runner_class(
-                self.model,
-                batch_size=1,
-                num_points=self.num_points,
-                uncertainty=config.uncertainty,
-                warmup=config.cuda_graph_warmup,
-                enable_tf32=config.enable_tf32,
-            )
-        elif config.execution_backend == "eager":
-            self._source_cuda = torch.empty(
-                shape,
-                device=self.device,
-                dtype=torch.float32,
-            )
-            self._target_cuda = torch.empty_like(self._source_cuda)
-            self._dummy_gt_flow = torch.zeros_like(self._source_cuda)
-        else:
-            raise ValueError(
-                f"Unsupported execution backend: {config.execution_backend}"
-            )
-
     @staticmethod
-    def _extract_state_dict(checkpoint: Any) -> dict[str, torch.Tensor]:
+    def _extract_state_dict(
+        checkpoint: Any,
+    ) -> dict[str, torch.Tensor]:
         if not isinstance(checkpoint, dict):
             raise TypeError(
-                "Unsupported checkpoint format: expected a state-dict-like "
-                f"mapping, received {type(checkpoint).__name__}."
+                "Unsupported checkpoint format: expected a mapping, "
+                f"received {type(checkpoint).__name__}."
             )
+
         for key in ("state_dict", "model_state_dict", "model"):
             nested = checkpoint.get(key)
             if isinstance(nested, dict) and nested:
@@ -1001,7 +990,10 @@ class DifFlow3DInference:
     def _strip_module_prefix(
         state_dict: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        if state_dict and all(key.startswith("module.") for key in state_dict):
+        if state_dict and all(
+            key.startswith("module.")
+            for key in state_dict
+        ):
             return {
                 key.removeprefix("module."): value
                 for key, value in state_dict.items()
@@ -1009,8 +1001,11 @@ class DifFlow3DInference:
         return state_dict
 
     def reset_sampling(self) -> None:
-        """Reset deterministic pair sampling after warmup."""
         self._pair_counter = 0
+        self._cached_target_timestamp_s = None
+        self._cached_target_points = None
+        self._cached_target_indices = None
+        self.runner.reset()
 
     def _sample_indices(
         self,
@@ -1018,7 +1013,8 @@ class DifFlow3DInference:
         rng: np.random.Generator,
     ) -> np.ndarray:
         if point_count < 1:
-            raise ValueError("Cannot run DifFlow3D on an empty point cloud.")
+            raise ValueError("Cannot run on an empty point cloud.")
+
         return rng.choice(
             point_count,
             size=self.num_points,
@@ -1027,8 +1023,10 @@ class DifFlow3DInference:
 
     @staticmethod
     def _as_numpy_points(points: torch.Tensor) -> np.ndarray:
-        array = points.detach().cpu().numpy()
-        array = np.asarray(array, dtype=np.float32)
+        array = np.asarray(
+            points.detach().cpu().numpy(),
+            dtype=np.float32,
+        )
         if array.ndim != 2 or array.shape[1] != 3:
             raise ValueError(
                 f"Point cloud must have shape [N,3], got {array.shape}."
@@ -1037,26 +1035,36 @@ class DifFlow3DInference:
             raise ValueError("Point cloud contains NaN or Inf values.")
         return np.ascontiguousarray(array)
 
-    def _stage_sampled_points(
+    def _stage_frame(
         self,
-        source_np: np.ndarray,
-        target_np: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        np.copyto(self._source_host_np, source_np)
-        np.copyto(self._target_host_np, target_np)
-
-        if self.graph_runner is not None:
-            source = self.graph_runner.source
-            target = self.graph_runner.target
+        points: np.ndarray,
+        *,
+        source_slot: bool,
+    ) -> None:
+        if source_slot:
+            np.copyto(self._source_host_np, points)
+            host = self._source_host
         else:
-            assert self._source_cuda is not None
-            assert self._target_cuda is not None
-            source = self._source_cuda
-            target = self._target_cuda
+            np.copyto(self._target_host_np, points)
+            host = self._target_host
 
-        source.copy_(self._source_host, non_blocking=True)
-        target.copy_(self._target_host, non_blocking=True)
-        return source, target
+        self.runner.next_input.copy_(
+            host,
+            non_blocking=True,
+        )
+
+    def _cached_source_matches(self, timestamp_s: float) -> bool:
+        return (
+            self._cached_target_timestamp_s is not None
+            and np.isclose(
+                self._cached_target_timestamp_s,
+                timestamp_s,
+                rtol=0.0,
+                atol=1.0e-12,
+            )
+            and self._cached_target_points is not None
+            and self._cached_target_indices is not None
+        )
 
     def infer(
         self,
@@ -1068,7 +1076,10 @@ class DifFlow3DInference:
             )
 
         source_frame, target_frame = frames
-        dt_s = float(target_frame.timestamp_s - source_frame.timestamp_s)
+        dt_s = float(
+            target_frame.timestamp_s
+            - source_frame.timestamp_s
+        )
         if dt_s <= 0.0:
             raise ValueError(
                 f"Frame timestamps are not increasing: dt={dt_s}."
@@ -1081,64 +1092,88 @@ class DifFlow3DInference:
                 f"Frame gap {dt_s:.6f}s exceeds "
                 f"{self.config.max_frame_gap_s:.6f}s."
             )
+        if not np.isclose(
+            dt_s,
+            self.config.frame_dt_s,
+            rtol=1.0e-5,
+            atol=1.0e-8,
+        ):
+            raise ValueError(
+                "The captured CUDA Graph uses a fixed frame interval of "
+                f"{self.config.frame_dt_s:.9f}s, but received {dt_s:.9f}s."
+            )
 
         source_full = self._as_numpy_points(source_frame.points)
         target_full = self._as_numpy_points(target_frame.points)
 
-        pair_seed = self.config.seed + 104729 * self._pair_counter
-        source_rng = np.random.default_rng(pair_seed)
-        target_rng = np.random.default_rng(pair_seed + 1)
+        pair_seed = (
+            self.config.seed
+            + 104729 * self._pair_counter
+        )
         self._pair_counter += 1
 
-        source_indices_np = self._sample_indices(
-            source_full.shape[0],
-            source_rng,
+        source_is_cached = self._cached_source_matches(
+            float(source_frame.timestamp_s)
         )
+
+        if source_is_cached:
+            assert self._cached_target_points is not None
+            assert self._cached_target_indices is not None
+            source_np = self._cached_target_points
+            source_indices_np = self._cached_target_indices
+        else:
+            source_rng = np.random.default_rng(pair_seed)
+            source_indices_np = self._sample_indices(
+                source_full.shape[0],
+                source_rng,
+            )
+            source_np = np.ascontiguousarray(
+                source_full[source_indices_np],
+                dtype=np.float32,
+            )
+
+        target_rng = np.random.default_rng(pair_seed + 1)
         target_indices_np = self._sample_indices(
             target_full.shape[0],
             target_rng,
-        )
-        source_np = np.ascontiguousarray(
-            source_full[source_indices_np],
-            dtype=np.float32,
         )
         target_np = np.ascontiguousarray(
             target_full[target_indices_np],
             dtype=np.float32,
         )
-        source, target = self._stage_sampled_points(
-            source_np,
-            target_np,
-        )
 
         with torch.inference_mode():
-            if self.graph_runner is not None:
-                # Inputs are already in the runner's static buffers, so replay
-                # directly and avoid an extra device-to-device copy.
-                self.graph_runner.graph.replay()
-                predicted_flow = self.graph_runner.flow()[0]
-            else:
-                assert self._dummy_gt_flow is not None
-                pred_flows, _, _, _, _ = self.model(
-                    source,
-                    target,
-                    source,
-                    target,
-                    self._dummy_gt_flow,
-                    uncertainty=self.config.uncertainty,
+            if not source_is_cached:
+                self.runner.reset()
+                self._stage_frame(
+                    source_np,
+                    source_slot=True,
                 )
-                predicted_flow = (
-                    pred_flows[0][0]
-                    .permute(0, 2, 1)[0]
-                    .contiguous()
+                if self.runner.replay_next() is not None:
+                    raise RuntimeError(
+                        "The first streaming frame must only be buffered."
+                    )
+
+            self._stage_frame(
+                target_np,
+                source_slot=False,
+            )
+            if self.runner.replay_next() is None:
+                raise RuntimeError(
+                    "Streaming decode did not produce a pair output."
                 )
 
-            source_points = source[0]
-            warped_points = source_points + predicted_flow
-            velocity = predicted_flow / dt_s
+            predicted_flow = self.runner.flow()[0]
+            source_points = self.runner.source_points()[0]
+            warped_points = self.runner.warped_points()[0]
+            velocity = self.runner.velocity()[0]
 
-        # Keep the original valid_indices tensor interface. This small transfer
-        # is included in the end-to-end latency measurement.
+        self._cached_target_timestamp_s = float(
+            target_frame.timestamp_s
+        )
+        self._cached_target_points = target_np
+        self._cached_target_indices = target_indices_np
+
         valid_indices = torch.from_numpy(source_indices_np).to(
             self.device,
             dtype=torch.long,
@@ -1154,6 +1189,8 @@ class DifFlow3DInference:
             source_timestamp_s=float(source_frame.timestamp_s),
             target_timestamp_s=float(target_frame.timestamp_s),
         )
+
+
 
 
 class OnlineDifFlow3DBuffer:
@@ -1204,7 +1241,7 @@ def warmup_from_sequence(
     repetitions: int,
     point_limit: int,
 ) -> None:
-    del point_limit  # Kept only for CLI compatibility with the previous script.
+    del point_limit
     if repetitions < 1:
         return
 
@@ -1224,7 +1261,9 @@ def warmup_from_sequence(
     ]
 
     for _ in range(repetitions):
+        estimator.reset_sampling()
         estimator.infer(frames)
+
 
 def percentile(values: np.ndarray, q: float) -> float:
     return float(np.percentile(values, q))
@@ -1513,12 +1552,6 @@ def parse_args() -> argparse.Namespace:
         help="Model module inside --difflow-repo.",
     )
     parser.add_argument(
-        "--execution-backend",
-        choices=("eager", "cuda-graph"),
-        default="cuda-graph",
-        help="Default: cuda-graph.",
-    )
-    parser.add_argument(
         "--disable-tf32",
         action="store_true",
         help="Disable TF32 for stricter FP32 comparison.",
@@ -1533,23 +1566,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--difflow-num-points",
         type=int,
-        default=8192,
-        help=(
-            "Number of independently sampled source and target points. "
-            "The official checkpoint was trained with 8192."
-        ),
+        default=2048,
+        help="Fixed input size for the minimal streaming runner.",
     )
     parser.add_argument(
         "--difflow-iters",
         type=int,
-        default=4,
-        help="Recurrent iterations; official evaluation config uses 4.",
+        default=2,
+        help=(
+            "Recurrent iterations. Any positive integer is supported; "
+            "the selected value is fixed into the captured CUDA Graph."
+        ),
     )
     parser.add_argument(
         "--difflow-uncertainty",
         type=float,
-        default=0.02,
-        help="Official evaluation uncertainty value.",
+        default=0.2,
+        help="Diffusion uncertainty setting used by inference.",
     )
     parser.add_argument(
         "--non-strict-checkpoint",
@@ -1679,7 +1712,6 @@ def main() -> None:
         repo_path=repo_path,
         checkpoint_path=checkpoint,
         model_module=args.model_module,
-        execution_backend=args.execution_backend,
         enable_tf32=not args.disable_tf32,
         cuda_graph_warmup=args.cuda_graph_warmup,
         device=args.device,
@@ -1689,6 +1721,7 @@ def main() -> None:
         strict_checkpoint=not args.non_strict_checkpoint,
         disable_bn_running_stats=not args.keep_bn_running_stats,
         seed=args.seed,
+        frame_dt_s=dt_s,
         max_frame_gap_s=2.0 * dt_s,
     )
 
@@ -1706,10 +1739,9 @@ def main() -> None:
     print("=" * 80)
     print("Model:                 DifFlow3D (no-occlusion checkpoint)")
     print(f"Model module:          {config.model_module}")
-    print(f"Execution backend:     {config.execution_backend}")
+    print("Execution backend:     streaming-cuda-graph")
     print(f"TF32 enabled:          {config.enable_tf32}")
-    if config.execution_backend == "cuda-graph":
-        print(f"CUDA Graph warmup:     {config.cuda_graph_warmup}")
+    print(f"CUDA Graph warmup:     {config.cuda_graph_warmup}")
     print(f"Repository:            {repo_path}")
     print(f"Checkpoint:            {checkpoint}")
     print(f"Frames:                {args.frames}")
@@ -1728,7 +1760,10 @@ def main() -> None:
         "Surface resampling:   "
         f"{'fixed samples' if args.same_samples_across_frames else 'independent each frame'}"
     )
-    print("Model pair sampling:   independent source/target (NO_CORR=True)")
+    print(
+        "Model frame sampling:  "
+        "independent per frame, reused across adjacent pairs"
+    )
     print("")
     print("Objects:")
     for spec in OBSTACLE_SPECS:
@@ -2098,9 +2133,9 @@ def main() -> None:
         },
         "model": {
             "name": "difflow3d",
-            "variant": "model_difflow_no_occlusion",
+            "variant": "minimal_streaming_cuda_graph",
             "model_module": config.model_module,
-            "execution_backend": config.execution_backend,
+            "execution_backend": "streaming-cuda-graph",
             "tf32_enabled": config.enable_tf32,
             "cuda_graph_warmup": config.cuda_graph_warmup,
             "repository": str(repo_path),
