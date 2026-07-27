@@ -1,0 +1,126 @@
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                 difflow3d/full_forward         0.00%       0.000us         0.00%       0.000us       0.000us      70.180ms       146.64%      70.180ms      14.036ms             5  
+                                          ProfilerStep*         0.09%     107.859us        99.99%     117.010ms      23.402ms       0.000us         0.00%      47.862ms       9.572ms             5  
+                                 difflow3d/full_forward         2.62%       3.069ms        99.90%     116.902ms      23.380ms       0.000us         0.00%      47.862ms       9.572ms             5  
+                     difflow/diffusion_gru/gated_update         0.00%       0.000us         0.00%       0.000us       0.000us      13.939ms        29.12%      13.939ms     464.623us            30  
+                  difflow/recurrent/bidirectional_cross         0.00%       0.000us         0.00%       0.000us       0.000us      12.086ms        25.25%      12.086ms     402.869us            30  
+                          difflow/recurrent/iteration_0         0.59%     693.788us        25.78%      30.168ms       2.011ms       0.000us         0.00%      11.877ms     791.821us            15  
+                              difflow/recurrent_l1_2048         0.20%     229.880us        18.77%      21.965ms       4.393ms       0.000us         0.00%      11.726ms       2.345ms             5  
+                          difflow/recurrent/iteration_1         0.62%     730.894us        23.77%      27.810ms       1.854ms       0.000us         0.00%      11.521ms     768.069us            15  
+                                      aten::convolution         0.36%     423.220us        19.85%      23.226ms      22.660us       0.000us         0.00%      10.853ms      10.589us          1025  
+                                     aten::_convolution         2.44%       2.853ms        19.49%      22.803ms      22.247us       0.000us         0.00%      10.853ms      10.589us          1025  
+                              difflow/recurrent_l0_full         0.20%     228.427us        18.78%      21.970ms       4.394ms       0.000us         0.00%       9.619ms       1.924ms             5  
+                                             aten::topk         2.41%       2.821ms         6.37%       7.451ms      28.116us       9.118ms        19.05%       9.118ms      34.409us           265  
+                                           aten::conv2d         0.19%     220.496us        11.58%      13.550ms      22.583us       0.000us         0.00%       8.684ms      14.473us           600  
+                              difflow/recurrent/warping         0.00%       0.000us         0.00%       0.000us       0.000us       8.492ms        17.74%       8.492ms     283.067us            30  
+                                difflow/coarse_l3/cross         0.00%       0.000us         0.00%       0.000us       0.000us       7.189ms        15.02%       7.189ms       1.438ms             5  
+                                 difflow/encoder_source         0.17%     194.944us        10.59%      12.390ms       2.478ms       0.000us         0.00%       7.171ms       1.434ms             5  
+                                 difflow/encoder_target         0.17%     201.221us        10.11%      11.832ms       2.366ms       0.000us         0.00%       7.082ms       1.416ms             5  
+                  difflow/recurrent/bidirectional_cross         2.72%       3.182ms        10.84%      12.684ms     422.793us       0.000us         0.00%       6.999ms     233.290us            30  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       6.803ms        14.21%       6.803ms       3.590us          1895  
+                  difflow/recurrent/prepare_spatial_knn         0.00%       0.000us         0.00%       0.000us       0.000us       6.696ms        13.99%       6.696ms     223.196us            30  
+                                  FurthestPointSampling         0.29%     333.795us         0.56%     659.025us      21.968us       6.505ms        13.59%       6.526ms     217.530us            30  
+                             difflow/encoder/level2_512         0.00%       0.000us         0.00%       0.000us       0.000us       6.434ms        13.44%       6.434ms     643.432us            10  
+                             difflow/encoder/level2_512         1.09%       1.278ms         4.08%       4.769ms     476.910us       0.000us         0.00%       6.288ms     628.831us            10  
+                       difflow/recurrent/flow_embedding         0.00%       0.000us         0.00%       0.000us       0.000us       5.607ms        11.72%       5.607ms     186.892us            30  
+                               difflow/recurrent_l2_512         0.20%     234.860us        18.68%      21.856ms       4.371ms       0.000us         0.00%       5.494ms       1.099ms             5  
+                                aten::cudnn_convolution         6.63%       7.761ms         9.99%      11.692ms      11.407us       5.377ms        11.23%       5.379ms       5.248us          1025  
+                                            aten::copy_         2.17%       2.538ms         4.89%       5.717ms       4.113us       5.194ms        10.85%       5.194ms       3.737us          1390  
+                        difflow/recurrent/diffusion_gru         0.45%     530.187us        14.92%      17.460ms     582.004us       0.000us         0.00%       4.984ms     166.139us            30  
+                            difflow/encoder/level1_2048         0.00%       0.000us         0.00%       0.000us       0.000us       4.952ms        10.35%       4.952ms     495.156us            10  
+void furthest_point_sampling_kernel<1024u>(int, int,...         0.00%       0.000us         0.00%       0.000us       0.000us       4.877ms        10.19%       4.877ms     487.672us            10  
+                     difflow/diffusion_gru/gated_update         3.26%       3.810ms        13.12%      15.347ms     511.581us       0.000us         0.00%       4.802ms     160.069us            30  
+                                             aten::add_         2.13%       2.491ms         4.56%       5.335ms       3.880us       4.689ms         9.80%       4.689ms       3.410us          1375  
+                                 difflow/encoder/level0         0.00%       0.000us         0.00%       0.000us       0.000us       4.652ms         9.72%       4.652ms     465.230us            10  
+                  difflow/recurrent/prepare_spatial_knn         1.06%       1.240ms         5.63%       6.589ms     219.639us       0.000us         0.00%       4.488ms     149.593us            30  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       4.451ms         9.30%       4.451ms       5.362us           830  
+                                            aten::clone         0.58%     678.889us         4.90%       5.735ms       7.037us       0.000us         0.00%       4.260ms       5.227us           815  
+                                       aten::contiguous         0.25%     290.518us         4.83%       5.650ms       7.484us       0.000us         0.00%       4.074ms       5.396us           755  
+                   difflow/recurrent/prepare_cosine_knn         0.00%       0.000us         0.00%       0.000us       0.000us       3.956ms         8.27%       3.956ms     263.764us            15  
+                       difflow/coarse_l3/flow_estimator         0.00%       0.000us         0.00%       0.000us       0.000us       3.838ms         8.02%       3.838ms     767.662us             5  
+                       difflow/recurrent/flow_embedding         1.31%       1.533ms         5.13%       6.005ms     200.165us       0.000us         0.00%       3.498ms     116.592us            30  
+                              difflow/encoder/level4_64         0.00%       0.000us         0.00%       0.000us       0.000us       3.439ms         7.19%       3.439ms     343.946us            10  
+                              difflow/recurrent/warping         2.19%       2.568ms         7.75%       9.075ms     302.487us       0.000us         0.00%       2.909ms      96.978us            30  
+                                      GroupingOperation         2.99%       3.498ms         4.70%       5.497ms       9.816us       2.830ms         5.91%       2.830ms       5.054us           560  
+group_points_kernel_fast(int, int, int, int, int, fl...         0.00%       0.000us         0.00%       0.000us       0.000us       2.830ms         5.91%       2.830ms       5.054us           560  
+void at::native::mbtopk::radixFindKthValues<float, u...         0.00%       0.000us         0.00%       0.000us       0.000us       2.830ms         5.91%       2.830ms       5.896us           480  
+                                              aten::bmm         2.63%       3.072ms         3.86%       4.515ms      13.893us       2.599ms         5.43%       2.785ms       8.569us           325  
+                             difflow/encoder/level3_256         0.00%       0.000us         0.00%       0.000us       0.000us       2.743ms         5.73%       2.743ms     274.330us            10  
+                           difflow/upsample/prepare_3nn         0.00%       0.000us         0.00%       0.000us       0.000us       2.703ms         5.65%       2.703ms     180.178us            15  
+                                difflow/coarse_l3/cross         1.62%       1.898ms         6.28%       7.351ms       1.470ms       0.000us         0.00%       2.635ms     527.094us             5  
+                            difflow/encoder/level1_2048         1.14%       1.330ms         4.42%       5.168ms     516.830us       0.000us         0.00%       2.477ms     247.703us            10  
+                                           aten::matmul         0.55%     649.207us         4.86%       5.683ms      20.297us       0.000us         0.00%       2.464ms       8.799us           280  
+                             difflow/encoder/level3_256         1.14%       1.339ms         4.05%       4.737ms     473.686us       0.000us         0.00%       2.414ms     241.405us            10  
+              difflow/recurrent/group_combined_features         0.00%       0.000us         0.00%       0.000us       0.000us       2.271ms         4.75%       2.271ms      25.233us            90  
+                   difflow/recurrent/prepare_cosine_knn         0.73%     851.272us         3.43%       4.008ms     267.225us       0.000us         0.00%       2.190ms     146.023us            15  
+                                           aten::conv1d         0.15%     174.283us         8.61%      10.071ms      23.697us       0.000us         0.00%       2.169ms       5.104us           425  
+                                              aten::add         1.13%       1.319ms         2.05%       2.401ms       4.707us       2.129ms         4.45%       2.129ms       4.175us           510  
+void at::native::mbtopk::computeBlockwiseWithinKCoun...         0.00%       0.000us         0.00%       0.000us       0.000us       2.059ms         4.30%       2.059ms       4.289us           480  
+                                 difflow/encoder/level0         1.04%       1.217ms         4.41%       5.159ms     515.904us       0.000us         0.00%       2.058ms     205.783us            10  
+                         difflow/diffusion_gru/self_knn         0.00%       0.000us         0.00%       0.000us       0.000us       1.956ms         4.09%       1.956ms     130.368us            15  
+                             difflow/upsample/apply_3nn         0.00%       0.000us         0.00%       0.000us       0.000us       1.895ms         3.96%       1.895ms      31.589us            60  
+              difflow/recurrent/group_combined_geometry         0.00%       0.000us         0.00%       0.000us       0.000us       1.796ms         3.75%       1.796ms      29.936us            60  
+void at::native::mbtopk::gatherTopK<float, unsigned ...         0.00%       0.000us         0.00%       0.000us       0.000us       1.629ms         3.40%       1.629ms      13.575us           120  
+                                              aten::cat         1.00%       1.172ms         1.61%       1.879ms       6.593us       1.542ms         3.22%       1.542ms       5.411us           285  
+              difflow/recurrent/group_combined_features         1.19%       1.390ms         2.67%       3.128ms      34.759us       0.000us         0.00%       1.420ms      15.781us            90  
+void at::native::sbtopk::gatherTopK<float, unsigned ...         0.00%       0.000us         0.00%       0.000us       0.000us       1.417ms         2.96%       1.417ms       9.775us           145  
+                                              aten::mul         1.55%       1.819ms         2.72%       3.179ms       5.086us       1.402ms         2.93%       1.402ms       2.244us           625  
+void furthest_point_sampling_kernel<512u>(int, int, ...         0.00%       0.000us         0.00%       0.000us       0.000us       1.353ms         2.83%       1.353ms     135.303us            10  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us       1.317ms         2.75%       1.317ms      10.978us           120  
+                                      aten::leaky_relu_         0.73%     854.610us         1.66%       1.937ms       4.035us       1.296ms         2.71%       1.296ms       2.699us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.296ms         2.71%       1.296ms       2.699us           480  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us       1.290ms         2.70%       1.290ms       8.603us           150  
+                                              aten::sum         2.16%       2.525ms         3.57%       4.178ms       5.843us       1.286ms         2.69%       1.286ms       1.798us           715  
+           difflow/recurrent/prepare_diffusion_self_knn         0.13%     153.507us         2.24%       2.621ms     174.737us       0.000us         0.00%       1.202ms      80.119us            15  
+                         difflow/diffusion_gru/self_knn         0.47%     551.005us         2.11%       2.468ms     164.503us       0.000us         0.00%       1.202ms      80.119us            15  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us       1.119ms         2.34%       1.119ms       3.390us           330  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.027ms         2.15%       1.027ms       1.592us           645  
+                              difflow/encoder/level4_64         0.94%       1.105ms         3.41%       3.993ms     399.262us       0.000us         0.00%       1.015ms     101.537us            10  
+                           difflow/upsample/prepare_3nn         0.79%     921.002us         2.78%       3.249ms     216.585us       0.000us         0.00%       1.010ms      67.329us            15  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     962.081us         2.01%     962.081us       2.291us           420  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     919.680us         1.92%     919.680us      15.328us            60  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     914.494us         1.91%     914.494us       9.145us           100  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     825.571us         1.73%     825.571us       8.256us           100  
+                       difflow/coarse_l3/flow_estimator         0.91%       1.067ms         3.38%       3.952ms     790.496us       0.000us         0.00%     809.543us     161.909us             5  
+                                       aten::max_pool2d         0.07%      84.486us         0.59%     693.653us       6.606us       0.000us         0.00%     801.726us       7.635us           105  
+                          aten::max_pool2d_with_indices         0.31%     366.354us         0.52%     609.167us       5.802us     801.726us         1.68%     801.726us       7.635us           105  
+void at::native::(anonymous namespace)::max_pool_for...         0.00%       0.000us         0.00%       0.000us       0.000us     801.726us         1.68%     801.726us       7.635us           105  
+                                               aten::to         0.23%     268.176us         3.26%       3.811ms       3.037us       0.000us         0.00%     743.528us       0.592us          1255  
+                                         aten::_to_copy         0.49%     568.632us         3.03%       3.543ms       6.327us       0.000us         0.00%     743.528us       1.328us           560  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us     743.528us         1.55%     743.528us       1.328us           560  
+difflow/diffusion_gru/materialize_channel_first_inpu...         0.22%     260.705us         0.40%     471.306us      15.710us       0.000us         0.00%     738.113us      24.604us            30  
+difflow/diffusion_gru/materialize_channel_first_inpu...         0.00%       0.000us         0.00%       0.000us       0.000us     738.113us         1.54%     738.113us      24.604us            30  
+                     difflow/diffusion_gru/random_noise         0.00%       0.000us         0.00%       0.000us       0.000us     601.246us         1.26%     601.246us      20.042us            30  
+void at_cuda_detail::cub::DeviceScanByKeyKernel<at_c...         0.00%       0.000us         0.00%       0.000us       0.000us     578.241us         1.21%     578.241us       2.409us           240  
+                                           aten::linear         0.10%     115.672us         1.05%       1.226ms      20.433us       0.000us         0.00%     563.643us       9.394us            60  
+                                            aten::addmm         0.51%     594.996us         0.80%     931.446us      15.524us     563.643us         1.18%     563.643us       9.394us            60  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     546.718us         1.14%     546.718us      12.149us            45  
+                                              aten::sub         0.92%       1.074ms         1.57%       1.842ms       5.187us     516.460us         1.08%     516.460us       1.455us           355  
+void implicit_convolve_sgemm<float, float, 1024, 5, ...         0.00%       0.000us         0.00%       0.000us       0.000us     474.465us         0.99%     474.465us       3.061us           155  
+                                              aten::pow         1.39%       1.624ms         2.42%       2.832ms       5.344us     464.933us         0.97%     464.933us       0.877us           530  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     464.933us         0.97%     464.933us       0.877us           530  
+                             difflow/upsample/apply_3nn         1.00%       1.170ms         2.52%       2.949ms      49.146us       0.000us         0.00%     391.870us       6.531us            60  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     382.051us         0.80%     382.051us       2.635us           145  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     374.338us         0.78%     374.338us       2.880us           130  
+              difflow/recurrent/group_combined_geometry         0.92%       1.072ms         2.56%       2.995ms      49.909us       0.000us         0.00%     359.557us       5.993us            60  
+                                              aten::max         0.33%     390.207us         0.47%     546.799us       9.113us     356.703us         0.75%     356.703us       5.945us            60  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us     356.703us         0.75%     356.703us       5.945us            60  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     341.536us         0.71%     341.536us       7.590us            45  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     297.447us         0.62%     297.447us       1.044us           285  
+void furthest_point_sampling_kernel<256u>(int, int, ...         0.00%       0.000us         0.00%       0.000us       0.000us     275.169us         0.57%     275.169us      27.517us            10  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     274.691us         0.57%     274.691us       1.526us           180  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us     259.101us         0.54%     259.101us       3.701us            70  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     253.827us         0.53%     253.827us       6.346us            40  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     224.581us         0.47%     224.581us       7.486us            30  
+void cublasLt::splitKreduce_kernel<32, 16, int, floa...         0.00%       0.000us         0.00%       0.000us       0.000us     223.778us         0.47%     223.778us       1.721us           130  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     216.420us         0.45%     216.420us       2.164us           100  
+                                              aten::div         0.38%     447.183us         0.67%     789.693us       4.936us     205.091us         0.43%     205.091us       1.282us           160  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     205.091us         0.43%     205.091us       1.282us           160  
+                                             aten::relu         0.11%     129.882us         0.82%     963.974us       5.355us       0.000us         0.00%     196.165us       1.090us           180  
+                                        aten::clamp_min         0.38%     439.180us         0.71%     834.092us       4.634us     196.165us         0.41%     196.165us       1.090us           180  
+                                        Memset (Device)         0.00%       0.000us         0.00%       0.000us       0.000us     191.388us         0.40%     191.388us       0.766us           250  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 117.018ms
+Self CUDA time total: 47.858ms
