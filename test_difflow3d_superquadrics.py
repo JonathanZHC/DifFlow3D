@@ -791,7 +791,7 @@ class DifFlow3DConfig:
     enable_tf32: bool = True
     cuda_graph_warmup: int = 10
     device: str = "cuda:0"
-    num_points: int = 2048
+    num_points: int = 1024
     iters: int = 2
     uncertainty: float = 0.2
     strict_checkpoint: bool = True
@@ -845,10 +845,10 @@ class DifFlow3DInference:
                 "DifFlow3D PointNet++ operators require CUDA; "
                 f"received device={self.device}."
             )
-        if self.num_points != 2048:
+        if self.num_points < 1024:
             raise ValueError(
-                "model_difflow_minimal and its streaming graph runner "
-                "currently require --difflow-num-points 2048."
+                "model_difflow and its streaming graph runner "
+                "currently require --difflow-num-points >= 1024."
             )
         if config.iters < 1:
             raise ValueError("--difflow-iters must be positive.")
@@ -1566,7 +1566,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--difflow-num-points",
         type=int,
-        default=2048,
+        default=1024,
         help="Fixed input size for the minimal streaming runner.",
     )
     parser.add_argument(

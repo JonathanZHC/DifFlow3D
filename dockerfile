@@ -63,6 +63,10 @@ RUN curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
       ros-${ROS_DISTRO}-sensor-msgs-py \
       ros-${ROS_DISTRO}-std-msgs \
       ros-${ROS_DISTRO}-visualization-msgs \
+      ros-${ROS_DISTRO}-rviz2 \
+      ros-${ROS_DISTRO}-rviz-default-plugins \
+      xauth \
+      mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --upgrade \

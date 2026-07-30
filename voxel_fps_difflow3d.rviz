@@ -1,0 +1,225 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.1
+      Class: rviz_default_plugins/Grid
+      Color: 120; 120; 120
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 30
+      Reference Frame: world
+    - Alpha: 0.20
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 150; 150; 150
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Raw Target
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.004
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/raw_target
+      Use Fixed Frame: true
+    - Alpha: 0.65
+      Class: rviz_default_plugins/PointCloud2
+      Color: 40; 200; 230
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: First Downsample Target
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.006
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/first_downsample_target
+      Use Fixed Frame: true
+    - Alpha: 0.85
+      Class: rviz_default_plugins/PointCloud2
+      Color: 240; 200; 30
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Second Downsample Target
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.008
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/second_downsample_target
+      Use Fixed Frame: true
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 60; 60
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Anchor Source
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 5
+      Size (m): 0.010
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/anchor_source
+      Use Fixed Frame: true
+    - Alpha: 0.8
+      Class: rviz_default_plugins/PointCloud2
+      Color: 190; 80; 230
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Anchor Target
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.008
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/anchor_target
+      Use Fixed Frame: true
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color: 30; 230; 80
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Anchor Predicted Warped
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 5
+      Size (m): 0.010
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/anchor_predicted_warped
+      Use Fixed Frame: true
+    - Alpha: 0.45
+      Class: rviz_default_plugins/PointCloud2
+      Color: 40; 100; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Recovered First Source
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.006
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/recovered_first_source
+      Use Fixed Frame: true
+    - Alpha: 0.85
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 130; 30
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Recovered First Warped
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.006
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/recovered_first_warped
+      Use Fixed Frame: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Anchor Displacements
+      Namespaces:
+        anchor_ground_truth: true
+        anchor_predicted: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/anchor_displacement_vectors
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Recovered First Displacements
+      Namespaces:
+        first_ground_truth: true
+        first_recovered: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pipeline/recovered_first_displacement_vectors
+  Enabled: true
+  Global Options:
+    Background Color: 35; 35; 35
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.5
+      Focal Point:
+        X: 0.3
+        Y: 0
+        Z: 0.3
+      Name: Current View
+      Pitch: 0.55
+      Target Frame: world
+      Yaw: 0.8
+Window Geometry:
+  Height: 900
+  Width: 1500

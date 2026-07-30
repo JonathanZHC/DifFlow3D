@@ -1,0 +1,2925 @@
+{
+  "config": {
+    "raw_points": 200000,
+    "frame_voxel_m": 0.03,
+    "history_frames": 5,
+    "history_vote_ratio": 0.5,
+    "num_anchors": 2048,
+    "iterations": 4
+  },
+  "timing": {
+    "host_to_device": {
+      "mean_ms": 0.41827046343595864,
+      "median_ms": 0.3088600351475179,
+      "p95_ms": 1.2092141783796235
+    },
+    "voxel_downsample": {
+      "mean_ms": 0.5175630290771729,
+      "median_ms": 0.47484401147812605,
+      "p95_ms": 0.7845945889130229
+    },
+    "motion_extraction": {
+      "mean_ms": 2.2430440942641616,
+      "median_ms": 2.077002020087093,
+      "p95_ms": 2.8481307905167332
+    },
+    "voxel_clustering": {
+      "mean_ms": 5.674574143114048,
+      "median_ms": 5.995217012241483,
+      "p95_ms": 7.547050202265381
+    },
+    "anchor_sampling": {
+      "mean_ms": 1.110509163388003,
+      "median_ms": 1.0687310132198036,
+      "p95_ms": 1.7971988185308874
+    },
+    "difflow": {
+      "mean_ms": 16.36432540079713,
+      "median_ms": 16.328547964803874,
+      "p95_ms": 17.819774604868144
+    },
+    "flow_recovery": {
+      "mean_ms": 2.3688981027496,
+      "median_ms": 1.8531990353949368,
+      "p95_ms": 3.8224085932597505
+    },
+    "total": {
+      "mean_ms": 28.781280193367454,
+      "median_ms": 29.124370019417256,
+      "p95_ms": 31.290439784061157
+    }
+  },
+  "frames": [
+    {
+      "source": 0,
+      "target": 1,
+      "included": false,
+      "source_points": 7553,
+      "target_points": 7547,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.7989919977262616,
+        "voxel_downsample": 0.4664259613491595,
+        "motion_extraction": 37.377364991698414,
+        "voxel_clustering": 2.9140859842300415,
+        "anchor_sampling": 4.861878987867385,
+        "difflow": 17.62237900402397,
+        "flow_recovery": 0.6050069932825863,
+        "total": 64.71743603469804
+      },
+      "metrics": {
+        "mean_epe_m": 0.01051476038992405,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03141075745224953,
+        "dynamic_mean_epe_m": 0.01911843568086624,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 1,
+      "target": 2,
+      "included": false,
+      "source_points": 7547,
+      "target_points": 7521,
+      "source_moving": 178,
+      "target_moving": 533,
+      "source_clusters": 6,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.32461300725117326,
+        "voxel_downsample": 0.47184701543301344,
+        "motion_extraction": 1.4861900126561522,
+        "voxel_clustering": 29.28211202379316,
+        "anchor_sampling": 20.128059957642108,
+        "difflow": 15.077178948558867,
+        "flow_recovery": 1.589565014000982,
+        "total": 68.44628701219335
+      },
+      "metrics": {
+        "mean_epe_m": 0.03375262767076492,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.031379759311676025,
+        "dynamic_mean_epe_m": 0.06157386675477028,
+        "motion_precision": 1.0,
+        "motion_recall": 0.043026347594875516
+      }
+    },
+    {
+      "source": 2,
+      "target": 3,
+      "included": true,
+      "source_points": 7521,
+      "target_points": 7526,
+      "source_moving": 714,
+      "target_moving": 958,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.3418800188228488,
+        "voxel_downsample": 0.47297897981479764,
+        "motion_extraction": 1.8350619939155877,
+        "voxel_clustering": 5.879257980268449,
+        "anchor_sampling": 0.9133369894698262,
+        "difflow": 16.821044962853193,
+        "flow_recovery": 1.3068089610897005,
+        "total": 27.655811980366707
+      },
+      "metrics": {
+        "mean_epe_m": 0.010572330094873905,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.032053232192993164,
+        "dynamic_mean_epe_m": 0.019251501187682152,
+        "motion_precision": 0.9985994397759104,
+        "motion_recall": 0.17272286821705427
+      }
+    },
+    {
+      "source": 3,
+      "target": 4,
+      "included": true,
+      "source_points": 7526,
+      "target_points": 7597,
+      "source_moving": 695,
+      "target_moving": 928,
+      "source_clusters": 7,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.30791800236329436,
+        "voxel_downsample": 0.4663469735532999,
+        "motion_extraction": 1.7011439776979387,
+        "voxel_clustering": 5.533198011107743,
+        "anchor_sampling": 1.2505609774962068,
+        "difflow": 18.40263296617195,
+        "flow_recovery": 2.4700500071048737,
+        "total": 30.217216990422457
+      },
+      "metrics": {
+        "mean_epe_m": 0.013492069207131863,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03995883651077747,
+        "dynamic_mean_epe_m": 0.02453281357884407,
+        "motion_precision": 1.0,
+        "motion_recall": 0.16791495530321335
+      }
+    },
+    {
+      "source": 4,
+      "target": 5,
+      "included": true,
+      "source_points": 7597,
+      "target_points": 7582,
+      "source_moving": 1046,
+      "target_moving": 1253,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.28461305191740394,
+        "voxel_downsample": 0.4710170323960483,
+        "motion_extraction": 2.723887038882822,
+        "voxel_clustering": 6.082432984840125,
+        "anchor_sampling": 1.0467299725860357,
+        "difflow": 16.577614995185286,
+        "flow_recovery": 1.8404840375296772,
+        "total": 29.124370019417256
+      },
+      "metrics": {
+        "mean_epe_m": 0.010685971938073635,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.033894726634025575,
+        "dynamic_mean_epe_m": 0.01948196068406105,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2510199184065275
+      }
+    },
+    {
+      "source": 5,
+      "target": 6,
+      "included": true,
+      "source_points": 7582,
+      "target_points": 7590,
+      "source_moving": 992,
+      "target_moving": 1170,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.6269140285439789,
+        "voxel_downsample": 0.47105096746236086,
+        "motion_extraction": 2.0484140259213746,
+        "voxel_clustering": 5.596863047685474,
+        "anchor_sampling": 1.165349967777729,
+        "difflow": 17.03316904604435,
+        "flow_recovery": 2.157844020985067,
+        "total": 29.189676977694035
+      },
+      "metrics": {
+        "mean_epe_m": 0.011056403629481792,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03755604717880486,
+        "dynamic_mean_epe_m": 0.02021452970802784,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23920906679527368
+      }
+    },
+    {
+      "source": 6,
+      "target": 7,
+      "included": true,
+      "source_points": 7590,
+      "target_points": 7615,
+      "source_moving": 1001,
+      "target_moving": 1192,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.2987700281664729,
+        "voxel_downsample": 0.47742296010255814,
+        "motion_extraction": 2.0360369817353785,
+        "voxel_clustering": 6.045321992132813,
+        "anchor_sampling": 1.661631977185607,
+        "difflow": 16.038795991335064,
+        "flow_recovery": 3.162059001624584,
+        "total": 29.79989198502153
+      },
+      "metrics": {
+        "mean_epe_m": 0.010431092232465744,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.0335284674540162,
+        "dynamic_mean_epe_m": 0.01899975724518299,
+        "motion_precision": 1.0,
+        "motion_recall": 0.240220782337413
+      }
+    },
+    {
+      "source": 7,
+      "target": 8,
+      "included": true,
+      "source_points": 7615,
+      "target_points": 7672,
+      "source_moving": 972,
+      "target_moving": 1156,
+      "source_clusters": 7,
+      "target_clusters": 10,
+      "timing_ms": {
+        "host_to_device": 0.30280998907983303,
+        "voxel_downsample": 0.4654289805330336,
+        "motion_extraction": 2.0531300106085837,
+        "voxel_clustering": 5.6080560316331685,
+        "anchor_sampling": 1.213321986142546,
+        "difflow": 16.328547964803874,
+        "flow_recovery": 2.064115949906409,
+        "total": 28.110535989981145
+      },
+      "metrics": {
+        "mean_epe_m": 0.009475662373006344,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.0305466465651989,
+        "dynamic_mean_epe_m": 0.017111018300056458,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23049561299502017
+      }
+    },
+    {
+      "source": 8,
+      "target": 9,
+      "included": true,
+      "source_points": 7672,
+      "target_points": 7684,
+      "source_moving": 990,
+      "target_moving": 1226,
+      "source_clusters": 9,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.31533301807940006,
+        "voxel_downsample": 0.4696239484474063,
+        "motion_extraction": 2.042909967713058,
+        "voxel_clustering": 5.56274299742654,
+        "anchor_sampling": 1.1170670040883124,
+        "difflow": 17.81369501259178,
+        "flow_recovery": 2.5051000411622226,
+        "total": 29.906413983553648
+      },
+      "metrics": {
+        "mean_epe_m": 0.011414604261517525,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.035996288247406485,
+        "dynamic_mean_epe_m": 0.02060537599027157,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23294117647058823
+      }
+    },
+    {
+      "source": 9,
+      "target": 10,
+      "included": true,
+      "source_points": 7684,
+      "target_points": 7723,
+      "source_moving": 1037,
+      "target_moving": 1216,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.29208901105448604,
+        "voxel_downsample": 0.6451350054703653,
+        "motion_extraction": 3.204501001164317,
+        "voxel_clustering": 7.060387986712158,
+        "anchor_sampling": 1.0118010104633868,
+        "difflow": 15.074562979862094,
+        "flow_recovery": 1.544867001939565,
+        "total": 28.9070539874956
+      },
+      "metrics": {
+        "mean_epe_m": 0.009787670336663723,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.030078593268990494,
+        "dynamic_mean_epe_m": 0.017543967813253403,
+        "motion_precision": 0.9990356798457087,
+        "motion_recall": 0.24177362893815635
+      }
+    },
+    {
+      "source": 10,
+      "target": 11,
+      "included": true,
+      "source_points": 7723,
+      "target_points": 7720,
+      "source_moving": 1014,
+      "target_moving": 1192,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3238149802200496,
+        "voxel_downsample": 0.4734910326078534,
+        "motion_extraction": 2.0787130342796445,
+        "voxel_clustering": 5.584991013165563,
+        "anchor_sampling": 1.4989569899626076,
+        "difflow": 14.818446012213826,
+        "flow_recovery": 1.3792460085824132,
+        "total": 26.236056990455836
+      },
+      "metrics": {
+        "mean_epe_m": 0.01308454293757677,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.05382296890020369,
+        "dynamic_mean_epe_m": 0.02340463548898697,
+        "motion_precision": 0.9990138067061144,
+        "motion_recall": 0.23470806302131603
+      }
+    },
+    {
+      "source": 11,
+      "target": 12,
+      "included": true,
+      "source_points": 7720,
+      "target_points": 7807,
+      "source_moving": 1015,
+      "target_moving": 1232,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3088600351475179,
+        "voxel_downsample": 0.5049119936302304,
+        "motion_extraction": 2.0641860319301486,
+        "voxel_clustering": 6.101230974309146,
+        "anchor_sampling": 1.0226420126855373,
+        "difflow": 15.939341974444687,
+        "flow_recovery": 3.263988997787237,
+        "total": 29.28642398910597
+      },
+      "metrics": {
+        "mean_epe_m": 0.009074856527149677,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02938663214445114,
+        "dynamic_mean_epe_m": 0.016309047117829323,
+        "motion_precision": 0.9990147783251232,
+        "motion_recall": 0.23608847497089638
+      }
+    },
+    {
+      "source": 12,
+      "target": 13,
+      "included": true,
+      "source_points": 7807,
+      "target_points": 7797,
+      "source_moving": 1010,
+      "target_moving": 1194,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.6691340240649879,
+        "voxel_downsample": 0.4688850021921098,
+        "motion_extraction": 2.046055975370109,
+        "voxel_clustering": 5.613151006400585,
+        "anchor_sampling": 1.0766119812615216,
+        "difflow": 16.963149013463408,
+        "flow_recovery": 3.9201219915412366,
+        "total": 30.83762404276058
+      },
+      "metrics": {
+        "mean_epe_m": 0.010610425844788551,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.033445394039154044,
+        "dynamic_mean_epe_m": 0.018964191898703575,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23122710622710624
+      }
+    },
+    {
+      "source": 13,
+      "target": 14,
+      "included": true,
+      "source_points": 7797,
+      "target_points": 7801,
+      "source_moving": 996,
+      "target_moving": 1185,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.33026200253516436,
+        "voxel_downsample": 0.4879930056631565,
+        "motion_extraction": 2.0383530063554645,
+        "voxel_clustering": 6.181102013215423,
+        "anchor_sampling": 0.9949220111593604,
+        "difflow": 16.358935041353106,
+        "flow_recovery": 1.661712012719363,
+        "total": 28.130955004598945
+      },
+      "metrics": {
+        "mean_epe_m": 0.00997071247547865,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.032771661877632134,
+        "dynamic_mean_epe_m": 0.0177735835313797,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22770919067215364
+      }
+    },
+    {
+      "source": 14,
+      "target": 15,
+      "included": true,
+      "source_points": 7801,
+      "target_points": 7760,
+      "source_moving": 997,
+      "target_moving": 1199,
+      "source_clusters": 6,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.2960000419989228,
+        "voxel_downsample": 0.6343069835565984,
+        "motion_extraction": 2.4381609982810915,
+        "voxel_clustering": 6.151684967335314,
+        "anchor_sampling": 0.9991559782065451,
+        "difflow": 16.72540098661557,
+        "flow_recovery": 1.9077769829891622,
+        "total": 29.231461987365037
+      },
+      "metrics": {
+        "mean_epe_m": 0.009088612161576748,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.028211208060383797,
+        "dynamic_mean_epe_m": 0.01621689274907112,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22804208600182982
+      }
+    },
+    {
+      "source": 15,
+      "target": 16,
+      "included": true,
+      "source_points": 7760,
+      "target_points": 7773,
+      "source_moving": 998,
+      "target_moving": 1194,
+      "source_clusters": 4,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.3480369923636317,
+        "voxel_downsample": 0.4764400073327124,
+        "motion_extraction": 2.052021969575435,
+        "voxel_clustering": 7.102435047272593,
+        "anchor_sampling": 1.0023320210166276,
+        "difflow": 14.814699010457844,
+        "flow_recovery": 1.5576540026813745,
+        "total": 27.437940007075667
+      },
+      "metrics": {
+        "mean_epe_m": 0.011002781800925732,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03572853021323678,
+        "dynamic_mean_epe_m": 0.019641496241092682,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22958362088796871
+      }
+    },
+    {
+      "source": 16,
+      "target": 17,
+      "included": true,
+      "source_points": 7773,
+      "target_points": 7756,
+      "source_moving": 996,
+      "target_moving": 1149,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.2855269704014063,
+        "voxel_downsample": 0.4665319574996829,
+        "motion_extraction": 2.5287740281783044,
+        "voxel_clustering": 6.907742004841566,
+        "anchor_sampling": 1.015404995996505,
+        "difflow": 15.056838048622012,
+        "flow_recovery": 1.5958049916662276,
+        "total": 27.935129997786134
+      },
+      "metrics": {
+        "mean_epe_m": 0.009401082992553711,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02985123321413991,
+        "dynamic_mean_epe_m": 0.016741033643484116,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2281786941580756
+      }
+    },
+    {
+      "source": 17,
+      "target": 18,
+      "included": true,
+      "source_points": 7756,
+      "target_points": 7796,
+      "source_moving": 960,
+      "target_moving": 1120,
+      "source_clusters": 5,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.2981029683724046,
+        "voxel_downsample": 0.47567900037392974,
+        "motion_extraction": 2.0816859905608,
+        "voxel_clustering": 5.5753610213287175,
+        "anchor_sampling": 0.9584100334905088,
+        "difflow": 16.630690020974725,
+        "flow_recovery": 1.6976420301944017,
+        "total": 27.815205976366997
+      },
+      "metrics": {
+        "mean_epe_m": 0.010075824335217476,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03662111330777407,
+        "dynamic_mean_epe_m": 0.017870590090751648,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21952892750971872
+      }
+    },
+    {
+      "source": 18,
+      "target": 19,
+      "included": true,
+      "source_points": 7796,
+      "target_points": 7781,
+      "source_moving": 914,
+      "target_moving": 1075,
+      "source_clusters": 4,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3253180184401572,
+        "voxel_downsample": 0.47937402268871665,
+        "motion_extraction": 2.0717880106531084,
+        "voxel_clustering": 6.407823006156832,
+        "anchor_sampling": 0.966754974797368,
+        "difflow": 17.112753994297236,
+        "flow_recovery": 1.8997659790329635,
+        "total": 29.343876987695694
+      },
+      "metrics": {
+        "mean_epe_m": 0.00935361348092556,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03105626767501235,
+        "dynamic_mean_epe_m": 0.0165353212505579,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2072562358276644
+      }
+    },
+    {
+      "source": 19,
+      "target": 20,
+      "included": true,
+      "source_points": 7781,
+      "target_points": 7801,
+      "source_moving": 931,
+      "target_moving": 1072,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3189530107192695,
+        "voxel_downsample": 0.498264969792217,
+        "motion_extraction": 2.399797027464956,
+        "voxel_clustering": 5.906575010158122,
+        "anchor_sampling": 1.0344149777665734,
+        "difflow": 15.991266001947224,
+        "flow_recovery": 2.1574280108325183,
+        "total": 28.418886999133974
+      },
+      "metrics": {
+        "mean_epe_m": 0.00968974083662033,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03807821497321129,
+        "dynamic_mean_epe_m": 0.017272822558879852,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21328751431844215
+      }
+    },
+    {
+      "source": 20,
+      "target": 21,
+      "included": true,
+      "source_points": 7801,
+      "target_points": 7791,
+      "source_moving": 910,
+      "target_moving": 1072,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.29105599969625473,
+        "voxel_downsample": 0.4466010141186416,
+        "motion_extraction": 1.9231810001656413,
+        "voxel_clustering": 4.962963983416557,
+        "anchor_sampling": 0.9411130449734628,
+        "difflow": 16.45800401456654,
+        "flow_recovery": 1.6020929906517267,
+        "total": 26.71951096272096
+      },
+      "metrics": {
+        "mean_epe_m": 0.008502118289470673,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02681966871023178,
+        "dynamic_mean_epe_m": 0.015163471922278404,
+        "motion_precision": 1.0,
+        "motion_recall": 0.20804755372656608
+      }
+    },
+    {
+      "source": 21,
+      "target": 22,
+      "included": true,
+      "source_points": 7791,
+      "target_points": 7756,
+      "source_moving": 894,
+      "target_moving": 1049,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.296158017590642,
+        "voxel_downsample": 0.4719480057246983,
+        "motion_extraction": 2.0609829807654023,
+        "voxel_clustering": 6.240687042009085,
+        "anchor_sampling": 0.9345319704152644,
+        "difflow": 18.119478947483003,
+        "flow_recovery": 1.5081220190040767,
+        "total": 29.713112977333367
+      },
+      "metrics": {
+        "mean_epe_m": 0.009262816980481148,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03248728811740875,
+        "dynamic_mean_epe_m": 0.016559572890400887,
+        "motion_precision": 1.0,
+        "motion_recall": 0.20513997246443322
+      }
+    },
+    {
+      "source": 22,
+      "target": 23,
+      "included": true,
+      "source_points": 7756,
+      "target_points": 7815,
+      "source_moving": 888,
+      "target_moving": 1044,
+      "source_clusters": 5,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.32306299544870853,
+        "voxel_downsample": 0.46916003338992596,
+        "motion_extraction": 2.4776890059001744,
+        "voxel_clustering": 5.870310997124761,
+        "anchor_sampling": 1.334807020612061,
+        "difflow": 15.942748985253274,
+        "flow_recovery": 1.4029340236447752,
+        "total": 27.903370035346597
+      },
+      "metrics": {
+        "mean_epe_m": 0.009852503426373005,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03690510895103216,
+        "dynamic_mean_epe_m": 0.01748250238597393,
+        "motion_precision": 1.0,
+        "motion_recall": 0.20315717227179136
+      }
+    },
+    {
+      "source": 23,
+      "target": 24,
+      "included": true,
+      "source_points": 7815,
+      "target_points": 7816,
+      "source_moving": 839,
+      "target_moving": 966,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.36086002364754677,
+        "voxel_downsample": 0.49745599972084165,
+        "motion_extraction": 2.077002020087093,
+        "voxel_clustering": 6.21748500270769,
+        "anchor_sampling": 0.9171969722956419,
+        "difflow": 16.891654988285154,
+        "flow_recovery": 1.7434870242141187,
+        "total": 28.791139950044453
+      },
+      "metrics": {
+        "mean_epe_m": 0.008655156940221786,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.030718205124139735,
+        "dynamic_mean_epe_m": 0.015330929309129715,
+        "motion_precision": 1.0,
+        "motion_recall": 0.1901631912964642
+      }
+    },
+    {
+      "source": 24,
+      "target": 25,
+      "included": true,
+      "source_points": 7816,
+      "target_points": 7778,
+      "source_moving": 846,
+      "target_moving": 957,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3015240072272718,
+        "voxel_downsample": 0.47588301822543144,
+        "motion_extraction": 2.062688989099115,
+        "voxel_clustering": 7.529849011916667,
+        "anchor_sampling": 0.9837630204856396,
+        "difflow": 16.195522039197385,
+        "flow_recovery": 2.110718982294202,
+        "total": 29.768937965855002
+      },
+      "metrics": {
+        "mean_epe_m": 0.009311369620263577,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03931693732738495,
+        "dynamic_mean_epe_m": 0.01660832203924656,
+        "motion_precision": 1.0,
+        "motion_recall": 0.1930625285257873
+      }
+    },
+    {
+      "source": 25,
+      "target": 26,
+      "included": true,
+      "source_points": 7778,
+      "target_points": 7803,
+      "source_moving": 822,
+      "target_moving": 945,
+      "source_clusters": 7,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.3257119678892195,
+        "voxel_downsample": 0.47057599294930696,
+        "motion_extraction": 2.0467150025069714,
+        "voxel_clustering": 5.797969992272556,
+        "anchor_sampling": 1.3517640181817114,
+        "difflow": 16.823348007164896,
+        "flow_recovery": 5.748572002630681,
+        "total": 32.67414798028767
+      },
+      "metrics": {
+        "mean_epe_m": 0.007721643429249525,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02213584436103696,
+        "dynamic_mean_epe_m": 0.013771827332675457,
+        "motion_precision": 1.0,
+        "motion_recall": 0.18848887869754644
+      }
+    },
+    {
+      "source": 26,
+      "target": 27,
+      "included": true,
+      "source_points": 7803,
+      "target_points": 7804,
+      "source_moving": 811,
+      "target_moving": 949,
+      "source_clusters": 5,
+      "target_clusters": 3,
+      "timing_ms": {
+        "host_to_device": 1.318426977377385,
+        "voxel_downsample": 0.4716700059361756,
+        "motion_extraction": 2.0390290301293135,
+        "voxel_clustering": 7.705462980084121,
+        "anchor_sampling": 0.9050020016729832,
+        "difflow": 15.080865996424109,
+        "flow_recovery": 1.3830710086040199,
+        "total": 28.995441971346736
+      },
+      "metrics": {
+        "mean_epe_m": 0.008898341096937656,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03129968810826534,
+        "dynamic_mean_epe_m": 0.015694789588451385,
+        "motion_precision": 1.0,
+        "motion_recall": 0.18331826401446655
+      }
+    },
+    {
+      "source": 27,
+      "target": 28,
+      "included": true,
+      "source_points": 7804,
+      "target_points": 7785,
+      "source_moving": 830,
+      "target_moving": 936,
+      "source_clusters": 3,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.32622896833345294,
+        "voxel_downsample": 0.5906819715164602,
+        "motion_extraction": 2.058668003883213,
+        "voxel_clustering": 6.233015039470047,
+        "anchor_sampling": 0.8811750449240208,
+        "difflow": 15.252540993969887,
+        "flow_recovery": 1.0918389889411628,
+        "total": 26.51703602168709
+      },
+      "metrics": {
+        "mean_epe_m": 0.01379106193780899,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.05470318123698228,
+        "dynamic_mean_epe_m": 0.024482587352395058,
+        "motion_precision": 1.0,
+        "motion_recall": 0.18880800727934485
+      }
+    },
+    {
+      "source": 28,
+      "target": 29,
+      "included": true,
+      "source_points": 7785,
+      "target_points": 7847,
+      "source_moving": 772,
+      "target_moving": 881,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.33651699777692556,
+        "voxel_downsample": 0.5030519678257406,
+        "motion_extraction": 2.1011449862271547,
+        "voxel_clustering": 5.60490699717775,
+        "anchor_sampling": 0.917652971111238,
+        "difflow": 17.443460994400084,
+        "flow_recovery": 2.583197026979178,
+        "total": 29.579719994217157
+      },
+      "metrics": {
+        "mean_epe_m": 0.009130260907113552,
+        "median_epe_m": 0.006661422550678253,
+        "p95_epe_m": 0.04032823890447613,
+        "dynamic_mean_epe_m": 0.016291333362460136,
+        "motion_precision": 1.0,
+        "motion_recall": 0.1769424707769883
+      }
+    },
+    {
+      "source": 29,
+      "target": 30,
+      "included": true,
+      "source_points": 7847,
+      "target_points": 7817,
+      "source_moving": 700,
+      "target_moving": 861,
+      "source_clusters": 4,
+      "target_clusters": 3,
+      "timing_ms": {
+        "host_to_device": 0.3206270048394799,
+        "voxel_downsample": 0.4736600094474852,
+        "motion_extraction": 2.5700299884192646,
+        "voxel_clustering": 7.736297964584082,
+        "anchor_sampling": 1.1040340177714825,
+        "difflow": 16.38368098065257,
+        "flow_recovery": 1.2574760476127267,
+        "total": 29.934641032014042
+      },
+      "metrics": {
+        "mean_epe_m": 0.007895838469266891,
+        "median_epe_m": 0.006195139139890671,
+        "p95_epe_m": 0.0337123245000839,
+        "dynamic_mean_epe_m": 0.014030490070581436,
+        "motion_precision": 1.0,
+        "motion_recall": 0.1585144927536232
+      }
+    },
+    {
+      "source": 30,
+      "target": 31,
+      "included": true,
+      "source_points": 7817,
+      "target_points": 7820,
+      "source_moving": 705,
+      "target_moving": 822,
+      "source_clusters": 3,
+      "target_clusters": 3,
+      "timing_ms": {
+        "host_to_device": 0.3873719833791256,
+        "voxel_downsample": 0.990338041447103,
+        "motion_extraction": 2.059550955891609,
+        "voxel_clustering": 6.4386900048702955,
+        "anchor_sampling": 0.8042759727686644,
+        "difflow": 17.026131972670555,
+        "flow_recovery": 1.4036929933354259,
+        "total": 29.21891800360754
+      },
+      "metrics": {
+        "mean_epe_m": 0.00994517095386982,
+        "median_epe_m": 0.0052536060102283955,
+        "p95_epe_m": 0.05526433885097503,
+        "dynamic_mean_epe_m": 0.017728937789797783,
+        "motion_precision": 1.0,
+        "motion_recall": 0.16077537058152794
+      }
+    },
+    {
+      "source": 31,
+      "target": 32,
+      "included": true,
+      "source_points": 7820,
+      "target_points": 7820,
+      "source_moving": 696,
+      "target_moving": 844,
+      "source_clusters": 3,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.32905401894822717,
+        "voxel_downsample": 0.462212017737329,
+        "motion_extraction": 2.0207460038363934,
+        "voxel_clustering": 7.116410008165985,
+        "anchor_sampling": 1.2696150224655867,
+        "difflow": 16.396465012803674,
+        "flow_recovery": 1.0369750089012086,
+        "total": 28.706434997729957
+      },
+      "metrics": {
+        "mean_epe_m": 0.009138398803770542,
+        "median_epe_m": 0.004592427983880043,
+        "p95_epe_m": 0.04957396499812582,
+        "dynamic_mean_epe_m": 0.016237737610936165,
+        "motion_precision": 1.0,
+        "motion_recall": 0.158145875937287
+      }
+    },
+    {
+      "source": 32,
+      "target": 33,
+      "included": true,
+      "source_points": 7820,
+      "target_points": 7832,
+      "source_moving": 611,
+      "target_moving": 788,
+      "source_clusters": 7,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.28803199529647827,
+        "voxel_downsample": 0.46886701602488756,
+        "motion_extraction": 2.4606079678051174,
+        "voxel_clustering": 6.568012002389878,
+        "anchor_sampling": 1.269933010917157,
+        "difflow": 16.27081900369376,
+        "flow_recovery": 1.8683449598029256,
+        "total": 29.27725500194356
+      },
+      "metrics": {
+        "mean_epe_m": 0.01673063077032566,
+        "median_epe_m": 0.003934979438781738,
+        "p95_epe_m": 0.14431031048297882,
+        "dynamic_mean_epe_m": 0.029600348323583603,
+        "motion_precision": 1.0,
+        "motion_recall": 0.13823529411764707
+      }
+    },
+    {
+      "source": 33,
+      "target": 34,
+      "included": true,
+      "source_points": 7832,
+      "target_points": 7835,
+      "source_moving": 591,
+      "target_moving": 713,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3117030137218535,
+        "voxel_downsample": 0.462847005110234,
+        "motion_extraction": 2.616886980831623,
+        "voxel_clustering": 7.463869987986982,
+        "anchor_sampling": 1.0401339968666434,
+        "difflow": 15.090696979314089,
+        "flow_recovery": 1.89644395140931,
+        "total": 28.95959699526429
+      },
+      "metrics": {
+        "mean_epe_m": 0.008862616494297981,
+        "median_epe_m": 0.003192843636497855,
+        "p95_epe_m": 0.04530090596526859,
+        "dynamic_mean_epe_m": 0.01570052281022072,
+        "motion_precision": 1.0,
+        "motion_recall": 0.13368016285908166
+      }
+    },
+    {
+      "source": 34,
+      "target": 35,
+      "included": true,
+      "source_points": 7835,
+      "target_points": 7849,
+      "source_moving": 519,
+      "target_moving": 678,
+      "source_clusters": 7,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.32142800046131015,
+        "voxel_downsample": 0.47304597683250904,
+        "motion_extraction": 2.7411399642005563,
+        "voxel_clustering": 6.036669947206974,
+        "anchor_sampling": 1.4437600038945675,
+        "difflow": 15.65309299621731,
+        "flow_recovery": 1.767490990459919,
+        "total": 28.515261015854776
+      },
+      "metrics": {
+        "mean_epe_m": 0.009690373204648495,
+        "median_epe_m": 0.0023919667582958937,
+        "p95_epe_m": 0.052006463706493304,
+        "dynamic_mean_epe_m": 0.017177391797304153,
+        "motion_precision": 1.0,
+        "motion_recall": 0.11742081447963801
+      }
+    },
+    {
+      "source": 35,
+      "target": 36,
+      "included": true,
+      "source_points": 7849,
+      "target_points": 7768,
+      "source_moving": 451,
+      "target_moving": 629,
+      "source_clusters": 7,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.29167503817006946,
+        "voxel_downsample": 0.4642550484277308,
+        "motion_extraction": 2.0303670316934586,
+        "voxel_clustering": 5.995217012241483,
+        "anchor_sampling": 0.9990469552576542,
+        "difflow": 17.367095046211034,
+        "flow_recovery": 2.4620220065116882,
+        "total": 29.720181948505342
+      },
+      "metrics": {
+        "mean_epe_m": 0.007913077250123024,
+        "median_epe_m": 0.001576544251292944,
+        "p95_epe_m": 0.030474187806248665,
+        "dynamic_mean_epe_m": 0.014007610268890858,
+        "motion_precision": 1.0,
+        "motion_recall": 0.10171402796571945
+      }
+    },
+    {
+      "source": 36,
+      "target": 37,
+      "included": true,
+      "source_points": 7768,
+      "target_points": 7773,
+      "source_moving": 337,
+      "target_moving": 497,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.2752940054051578,
+        "voxel_downsample": 0.46221603406593204,
+        "motion_extraction": 2.57181900087744,
+        "voxel_clustering": 6.518157024402171,
+        "anchor_sampling": 1.8416829989291728,
+        "difflow": 15.224914997816086,
+        "flow_recovery": 1.1505179572850466,
+        "total": 28.12178694875911
+      },
+      "metrics": {
+        "mean_epe_m": 0.018256910145282745,
+        "median_epe_m": 0.0007718002889305353,
+        "p95_epe_m": 0.012927573174238205,
+        "dynamic_mean_epe_m": 0.03251253440976143,
+        "motion_precision": 1.0,
+        "motion_recall": 0.07725813846859239
+      }
+    },
+    {
+      "source": 37,
+      "target": 38,
+      "included": true,
+      "source_points": 7773,
+      "target_points": 7831,
+      "source_moving": 329,
+      "target_moving": 454,
+      "source_clusters": 5,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.297838996630162,
+        "voxel_downsample": 0.718653027433902,
+        "motion_extraction": 2.4330620071850717,
+        "voxel_clustering": 5.4664029739797115,
+        "anchor_sampling": 0.9046500199474394,
+        "difflow": 16.51257002959028,
+        "flow_recovery": 1.3263719738461077,
+        "total": 27.732838003430516
+      },
+      "metrics": {
+        "mean_epe_m": 0.017318231984972954,
+        "median_epe_m": 0.0,
+        "p95_epe_m": 0.012021860107779503,
+        "dynamic_mean_epe_m": 0.030804265290498734,
+        "motion_precision": 1.0,
+        "motion_recall": 0.07528604118993135
+      }
+    },
+    {
+      "source": 38,
+      "target": 39,
+      "included": true,
+      "source_points": 7831,
+      "target_points": 7764,
+      "source_moving": 237,
+      "target_moving": 338,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3285649581812322,
+        "voxel_downsample": 0.46721595572307706,
+        "motion_extraction": 2.0472410251386464,
+        "voxel_clustering": 5.989858997054398,
+        "anchor_sampling": 1.2279989896342158,
+        "difflow": 16.134520003106445,
+        "flow_recovery": 2.1842599962837994,
+        "total": 28.455528954509646
+      },
+      "metrics": {
+        "mean_epe_m": 0.0416913703083992,
+        "median_epe_m": 0.0007862293859943748,
+        "p95_epe_m": 0.011104282923042774,
+        "dynamic_mean_epe_m": 0.07406649738550186,
+        "motion_precision": 1.0,
+        "motion_recall": 0.05376588021778585
+      }
+    },
+    {
+      "source": 39,
+      "target": 40,
+      "included": true,
+      "source_points": 7764,
+      "target_points": 7827,
+      "source_moving": 144,
+      "target_moving": 234,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.29219401767477393,
+        "voxel_downsample": 0.6496499991044402,
+        "motion_extraction": 2.4632029817439616,
+        "voxel_clustering": 6.174650974571705,
+        "anchor_sampling": 1.049885991960764,
+        "difflow": 16.249612963292748,
+        "flow_recovery": 1.5551919932477176,
+        "total": 28.514253965113312
+      },
+      "metrics": {
+        "mean_epe_m": 0.05272870138287544,
+        "median_epe_m": 0.0015377277741208673,
+        "p95_epe_m": 0.01017574779689312,
+        "dynamic_mean_epe_m": 0.0940035954117775,
+        "motion_precision": 1.0,
+        "motion_recall": 0.0330654420206659
+      }
+    },
+    {
+      "source": 40,
+      "target": 41,
+      "included": true,
+      "source_points": 7827,
+      "target_points": 7832,
+      "source_moving": 93,
+      "target_moving": 147,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.2802190138027072,
+        "voxel_downsample": 0.624414999037981,
+        "motion_extraction": 2.4533229880034924,
+        "voxel_clustering": 5.745623959228396,
+        "anchor_sampling": 1.0040359920822084,
+        "difflow": 16.86153799528256,
+        "flow_recovery": 1.8531990353949368,
+        "total": 28.89919199515134
+      },
+      "metrics": {
+        "mean_epe_m": 0.03416869789361954,
+        "median_epe_m": 0.002337525598704815,
+        "p95_epe_m": 0.009237169288098812,
+        "dynamic_mean_epe_m": 0.06086444854736328,
+        "motion_precision": 1.0,
+        "motion_recall": 0.02116522530723714
+      }
+    },
+    {
+      "source": 41,
+      "target": 42,
+      "included": true,
+      "source_points": 7832,
+      "target_points": 7829,
+      "source_moving": 35,
+      "target_moving": 46,
+      "source_clusters": 2,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.2957000397145748,
+        "voxel_downsample": 0.4590849857777357,
+        "motion_extraction": 1.9358060089871287,
+        "voxel_clustering": 6.240300950594246,
+        "anchor_sampling": 0.725418038200587,
+        "difflow": 17.49949000077322,
+        "flow_recovery": 1.1833910248242319,
+        "total": 28.41510798316449
+      },
+      "metrics": {
+        "mean_epe_m": 0.026001086458563805,
+        "median_epe_m": 0.003139680717140436,
+        "p95_epe_m": 0.008289474993944168,
+        "dynamic_mean_epe_m": 0.04599966108798981,
+        "motion_precision": 1.0,
+        "motion_recall": 0.00790603117235148
+      }
+    },
+    {
+      "source": 42,
+      "target": 43,
+      "included": true,
+      "source_points": 7829,
+      "target_points": 7784,
+      "source_moving": 10,
+      "target_moving": 51,
+      "source_clusters": 1,
+      "target_clusters": 3,
+      "timing_ms": {
+        "host_to_device": 0.28677197406068444,
+        "voxel_downsample": 0.5838089855387807,
+        "motion_extraction": 3.1927020172588527,
+        "voxel_clustering": 7.162960013374686,
+        "anchor_sampling": 0.7418299792334437,
+        "difflow": 15.492374019231647,
+        "flow_recovery": 0.44986000284552574,
+        "total": 27.983419015072286
+      },
+      "metrics": {
+        "mean_epe_m": 0.027546551078557968,
+        "median_epe_m": 0.003913169726729393,
+        "p95_epe_m": 0.007333600893616676,
+        "dynamic_mean_epe_m": 0.04886968806385994,
+        "motion_precision": 1.0,
+        "motion_recall": 0.002266032177656923
+      }
+    },
+    {
+      "source": 43,
+      "target": 44,
+      "included": true,
+      "source_points": 7784,
+      "target_points": 7787,
+      "source_moving": 0,
+      "target_moving": 10,
+      "source_clusters": 0,
+      "target_clusters": 1,
+      "timing_ms": {
+        "host_to_device": 0.3075210261158645,
+        "voxel_downsample": 0.4640730330720544,
+        "motion_extraction": 1.9742000149562955,
+        "voxel_clustering": 4.779992974363267,
+        "anchor_sampling": 0.41231897193938494,
+        "difflow": 14.846524980384856,
+        "flow_recovery": 0.10467297397553921,
+        "total": 22.96269201906398
+      },
+      "metrics": {
+        "mean_epe_m": 0.003461162792518735,
+        "median_epe_m": 0.004661797545850277,
+        "p95_epe_m": 0.006666666828095913,
+        "dynamic_mean_epe_m": 0.0061538806185126305,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 44,
+      "target": 45,
+      "included": true,
+      "source_points": 7787,
+      "target_points": 7820,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.32119901152327657,
+        "voxel_downsample": 0.7416019798256457,
+        "motion_extraction": 1.6457249876111746,
+        "voxel_clustering": 0.09239895734935999,
+        "anchor_sampling": 0.2524490118958056,
+        "difflow": 16.478114994242787,
+        "flow_recovery": 0.9931640233844519,
+        "total": 20.595804031472653
+      },
+      "metrics": {
+        "mean_epe_m": 0.003387271426618099,
+        "median_epe_m": 0.005401089787483215,
+        "p95_epe_m": 0.006768166972324247,
+        "dynamic_mean_epe_m": 0.006005619652569294,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 45,
+      "target": 46,
+      "included": true,
+      "source_points": 7820,
+      "target_points": 7830,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.28172298334538937,
+        "voxel_downsample": 0.8257810259237885,
+        "motion_extraction": 1.9239120301790535,
+        "voxel_clustering": 1.4412419986911118,
+        "anchor_sampling": 0.24111499078571796,
+        "difflow": 17.059389036148787,
+        "flow_recovery": 0.13617100194096565,
+        "total": 21.984860999509692
+      },
+      "metrics": {
+        "mean_epe_m": 0.003292023902758956,
+        "median_epe_m": 0.004426360595971346,
+        "p95_epe_m": 0.007613551430404181,
+        "dynamic_mean_epe_m": 0.005836233962327242,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 46,
+      "target": 47,
+      "included": true,
+      "source_points": 7830,
+      "target_points": 7756,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.3180029452778399,
+        "voxel_downsample": 0.46945596113801,
+        "motion_extraction": 1.6468600369989872,
+        "voxel_clustering": 0.09345298167318106,
+        "anchor_sampling": 0.2504829899407923,
+        "difflow": 17.215806001331657,
+        "flow_recovery": 0.11282600462436676,
+        "total": 20.176056015770882
+      },
+      "metrics": {
+        "mean_epe_m": 0.0032010034192353487,
+        "median_epe_m": 0.0034472632687538862,
+        "p95_epe_m": 0.008512563491240141,
+        "dynamic_mean_epe_m": 0.005682125687599182,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 47,
+      "target": 48,
+      "included": true,
+      "source_points": 7756,
+      "target_points": 7780,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.25245401775464416,
+        "voxel_downsample": 0.4432509886100888,
+        "motion_extraction": 1.9376129494048655,
+        "voxel_clustering": 2.1278620115481317,
+        "anchor_sampling": 0.37555204471573234,
+        "difflow": 18.00666202325374,
+        "flow_recovery": 0.40441699093207717,
+        "total": 23.6167719704099
+      },
+      "metrics": {
+        "mean_epe_m": 0.003100548405200243,
+        "median_epe_m": 0.002464763820171356,
+        "p95_epe_m": 0.00948964268900454,
+        "dynamic_mean_epe_m": 0.005506721790879965,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 48,
+      "target": 49,
+      "included": true,
+      "source_points": 7780,
+      "target_points": 7778,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 1.5890999929979444,
+        "voxel_downsample": 0.4670390044339001,
+        "motion_extraction": 1.6530650318600237,
+        "voxel_clustering": 0.09315501665696502,
+        "anchor_sampling": 0.2549350028857589,
+        "difflow": 16.05805999133736,
+        "flow_recovery": 0.11389696737751365,
+        "total": 20.29844297794625
+      },
+      "metrics": {
+        "mean_epe_m": 0.003014294197782874,
+        "median_epe_m": 0.0014798319898545742,
+        "p95_epe_m": 0.0103751772083342,
+        "dynamic_mean_epe_m": 0.005363954231142998,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 49,
+      "target": 50,
+      "included": true,
+      "source_points": 7778,
+      "target_points": 7812,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 1.1766329989768565,
+        "voxel_downsample": 0.47484401147812605,
+        "motion_extraction": 2.433837973512709,
+        "voxel_clustering": 1.4710340183228254,
+        "anchor_sampling": 0.24223700165748596,
+        "difflow": 15.41588397230953,
+        "flow_recovery": 0.09988300735130906,
+        "total": 21.384752995800227
+      },
+      "metrics": {
+        "mean_epe_m": 0.0028980267234146595,
+        "median_epe_m": 0.0004934396129101515,
+        "p95_epe_m": 0.011076203268021344,
+        "dynamic_mean_epe_m": 0.005165181588381529,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 50,
+      "target": 51,
+      "included": true,
+      "source_points": 7812,
+      "target_points": 7740,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.2877400256693363,
+        "voxel_downsample": 0.45578298158943653,
+        "motion_extraction": 1.7884080298244953,
+        "voxel_clustering": 0.15819701366126537,
+        "anchor_sampling": 0.44102600077167153,
+        "difflow": 15.838788996916264,
+        "flow_recovery": 0.11100602569058537,
+        "total": 19.14760802173987
+      },
+      "metrics": {
+        "mean_epe_m": 0.003010967280715704,
+        "median_epe_m": 0.0004934396129101515,
+        "p95_epe_m": 0.012012187764048575,
+        "dynamic_mean_epe_m": 0.005353135522454977,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 51,
+      "target": 52,
+      "included": true,
+      "source_points": 7740,
+      "target_points": 7795,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.28606102569028735,
+        "voxel_downsample": 0.4652219940908253,
+        "motion_extraction": 1.8119909800589085,
+        "voxel_clustering": 0.16626098658889532,
+        "anchor_sampling": 0.4309070063754916,
+        "difflow": 15.967131010256708,
+        "flow_recovery": 0.11109496699646115,
+        "total": 19.306270987726748
+      },
+      "metrics": {
+        "mean_epe_m": 0.0032935170456767082,
+        "median_epe_m": 0.0014798319898545742,
+        "p95_epe_m": 0.012887643184512852,
+        "dynamic_mean_epe_m": 0.0058804661966860294,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 52,
+      "target": 53,
+      "included": true,
+      "source_points": 7795,
+      "target_points": 7786,
+      "source_moving": 0,
+      "target_moving": 0,
+      "source_clusters": 0,
+      "target_clusters": 0,
+      "timing_ms": {
+        "host_to_device": 0.2802960225380957,
+        "voxel_downsample": 0.4505919641815126,
+        "motion_extraction": 1.6099639469757676,
+        "voxel_clustering": 0.09231799049302936,
+        "anchor_sampling": 0.24995196145027876,
+        "difflow": 15.922250982839614,
+        "flow_recovery": 0.11176802217960358,
+        "total": 18.786977976560593
+      },
+      "metrics": {
+        "mean_epe_m": 0.0035930960439145565,
+        "median_epe_m": 0.002464763820171356,
+        "p95_epe_m": 0.013458591792732476,
+        "dynamic_mean_epe_m": 0.006391643546521664,
+        "motion_precision": 0.0,
+        "motion_recall": 0.0
+      }
+    },
+    {
+      "source": 53,
+      "target": 54,
+      "included": true,
+      "source_points": 7786,
+      "target_points": 7869,
+      "source_moving": 12,
+      "target_moving": 31,
+      "source_clusters": 1,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.2760880161076784,
+        "voxel_downsample": 0.46248704893514514,
+        "motion_extraction": 2.557812025770545,
+        "voxel_clustering": 5.894062982406467,
+        "anchor_sampling": 1.0344869806431234,
+        "difflow": 15.878662001341581,
+        "flow_recovery": 0.8902400149963796,
+        "total": 27.066991024184972
+      },
+      "metrics": {
+        "mean_epe_m": 0.006727981381118298,
+        "median_epe_m": 0.0034472632687538862,
+        "p95_epe_m": 0.014407078037038445,
+        "dynamic_mean_epe_m": 0.01197350025177002,
+        "motion_precision": 1.0,
+        "motion_recall": 0.002742857142857143
+      }
+    },
+    {
+      "source": 54,
+      "target": 55,
+      "included": true,
+      "source_points": 7869,
+      "target_points": 7823,
+      "source_moving": 16,
+      "target_moving": 37,
+      "source_clusters": 1,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.32648997148498893,
+        "voxel_downsample": 0.6319389794953167,
+        "motion_extraction": 2.3479280062019825,
+        "voxel_clustering": 5.066850979346782,
+        "anchor_sampling": 1.1644400074146688,
+        "difflow": 17.034574993886054,
+        "flow_recovery": 0.47381198965013027,
+        "total": 27.155813004355878
+      },
+      "metrics": {
+        "mean_epe_m": 0.008562026545405388,
+        "median_epe_m": 0.004426360595971346,
+        "p95_epe_m": 0.01512083411216735,
+        "dynamic_mean_epe_m": 0.015225893817842007,
+        "motion_precision": 1.0,
+        "motion_recall": 0.003615819209039548
+      }
+    },
+    {
+      "source": 55,
+      "target": 56,
+      "included": true,
+      "source_points": 7823,
+      "target_points": 7780,
+      "source_moving": 25,
+      "target_moving": 45,
+      "source_clusters": 2,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.30464696465060115,
+        "voxel_downsample": 0.7742979796603322,
+        "motion_extraction": 2.690442022867501,
+        "voxel_clustering": 5.386764009017497,
+        "anchor_sampling": 0.7411239785142243,
+        "difflow": 16.53110794723034,
+        "flow_recovery": 1.042677031364292,
+        "total": 27.55251998314634
+      },
+      "metrics": {
+        "mean_epe_m": 0.008530898950994015,
+        "median_epe_m": 0.005401089787483215,
+        "p95_epe_m": 0.01582874525338411,
+        "dynamic_mean_epe_m": 0.015146895311772823,
+        "motion_precision": 1.0,
+        "motion_recall": 0.005674080798910576
+      }
+    },
+    {
+      "source": 56,
+      "target": 57,
+      "included": true,
+      "source_points": 7780,
+      "target_points": 7776,
+      "source_moving": 54,
+      "target_moving": 75,
+      "source_clusters": 3,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.2996650291606784,
+        "voxel_downsample": 0.4816869623027742,
+        "motion_extraction": 1.9712680368684232,
+        "voxel_clustering": 5.421023990493268,
+        "anchor_sampling": 0.7681760471314192,
+        "difflow": 17.62664003763348,
+        "flow_recovery": 1.2813150533474982,
+        "total": 27.93203596957028
+      },
+      "metrics": {
+        "mean_epe_m": 0.012040721252560616,
+        "median_epe_m": 0.00637048901990056,
+        "p95_epe_m": 0.016687750350683928,
+        "dynamic_mean_epe_m": 0.021328963339328766,
+        "motion_precision": 1.0,
+        "motion_recall": 0.012295081967213115
+      }
+    },
+    {
+      "source": 57,
+      "target": 58,
+      "included": true,
+      "source_points": 7776,
+      "target_points": 7799,
+      "source_moving": 38,
+      "target_moving": 75,
+      "source_clusters": 2,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.3349999897181988,
+        "voxel_downsample": 0.4712970112450421,
+        "motion_extraction": 2.0533190108835697,
+        "voxel_clustering": 6.744996004272252,
+        "anchor_sampling": 2.4822449777275324,
+        "difflow": 16.44375396426767,
+        "flow_recovery": 0.893071002792567,
+        "total": 29.507950006518513
+      },
+      "metrics": {
+        "mean_epe_m": 0.010407639667391777,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.017191687133163214,
+        "dynamic_mean_epe_m": 0.018591733649373055,
+        "motion_precision": 1.0,
+        "motion_recall": 0.008729611762003216
+      }
+    },
+    {
+      "source": 58,
+      "target": 59,
+      "included": true,
+      "source_points": 7799,
+      "target_points": 7804,
+      "source_moving": 53,
+      "target_moving": 66,
+      "source_clusters": 2,
+      "target_clusters": 2,
+      "timing_ms": {
+        "host_to_device": 0.32083201222121716,
+        "voxel_downsample": 0.4682940198108554,
+        "motion_extraction": 2.6563149876892567,
+        "voxel_clustering": 5.508265981916338,
+        "anchor_sampling": 0.7444749935530126,
+        "difflow": 15.89657599106431,
+        "flow_recovery": 0.9951500105671585,
+        "total": 26.68568497756496
+      },
+      "metrics": {
+        "mean_epe_m": 0.015521624125540257,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.01818028874695301,
+        "dynamic_mean_epe_m": 0.027587315067648888,
+        "motion_precision": 1.0,
+        "motion_recall": 0.012078395624430265
+      }
+    },
+    {
+      "source": 59,
+      "target": 60,
+      "included": true,
+      "source_points": 7804,
+      "target_points": 7813,
+      "source_moving": 70,
+      "target_moving": 121,
+      "source_clusters": 4,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.3161000204272568,
+        "voxel_downsample": 0.482277013361454,
+        "motion_extraction": 2.0923659903928638,
+        "voxel_clustering": 6.627900991588831,
+        "anchor_sampling": 1.0831290273927152,
+        "difflow": 15.318388002924621,
+        "flow_recovery": 1.4257729635573924,
+        "total": 27.42819703416899
+      },
+      "metrics": {
+        "mean_epe_m": 0.012345210649073124,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.018851172458380454,
+        "dynamic_mean_epe_m": 0.021866098046302795,
+        "motion_precision": 1.0,
+        "motion_recall": 0.015887426236949616
+      }
+    },
+    {
+      "source": 60,
+      "target": 61,
+      "included": true,
+      "source_points": 7813,
+      "target_points": 7838,
+      "source_moving": 97,
+      "target_moving": 152,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.548032985534519,
+        "voxel_downsample": 0.4835400031879544,
+        "motion_extraction": 2.457492984831333,
+        "voxel_clustering": 6.644586042966694,
+        "anchor_sampling": 1.212871982716024,
+        "difflow": 15.299632970709354,
+        "flow_recovery": 1.8445859896019101,
+        "total": 28.584362007677555
+      },
+      "metrics": {
+        "mean_epe_m": 0.017073024064302444,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.01944817081093788,
+        "dynamic_mean_epe_m": 0.030489491298794746,
+        "motion_precision": 1.0,
+        "motion_recall": 0.02217142857142857
+      }
+    },
+    {
+      "source": 61,
+      "target": 62,
+      "included": true,
+      "source_points": 7838,
+      "target_points": 7797,
+      "source_moving": 107,
+      "target_moving": 181,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.9730579913593829,
+        "voxel_downsample": 0.4696559626609087,
+        "motion_extraction": 2.705515013076365,
+        "voxel_clustering": 5.435533006675541,
+        "anchor_sampling": 0.9732189937494695,
+        "difflow": 16.457015997730196,
+        "flow_recovery": 2.685792976990342,
+        "total": 29.782969038933516
+      },
+      "metrics": {
+        "mean_epe_m": 0.05720285698771477,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.020891764480620613,
+        "dynamic_mean_epe_m": 0.101369209587574,
+        "motion_precision": 1.0,
+        "motion_recall": 0.02419172507347954
+      }
+    },
+    {
+      "source": 62,
+      "target": 63,
+      "included": true,
+      "source_points": 7797,
+      "target_points": 7768,
+      "source_moving": 125,
+      "target_moving": 193,
+      "source_clusters": 5,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.3373950021341443,
+        "voxel_downsample": 0.4786369972862303,
+        "motion_extraction": 2.055618038866669,
+        "voxel_clustering": 6.809696031268686,
+        "anchor_sampling": 1.5178120229393244,
+        "difflow": 15.953230031300336,
+        "flow_recovery": 2.1925480104982853,
+        "total": 29.428064008243382
+      },
+      "metrics": {
+        "mean_epe_m": 0.07681840658187866,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.021240135654807087,
+        "dynamic_mean_epe_m": 0.13656021654605865,
+        "motion_precision": 1.0,
+        "motion_recall": 0.028499772001823985
+      }
+    },
+    {
+      "source": 63,
+      "target": 64,
+      "included": true,
+      "source_points": 7768,
+      "target_points": 7756,
+      "source_moving": 184,
+      "target_moving": 345,
+      "source_clusters": 11,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.3206429537385702,
+        "voxel_downsample": 0.6244509713724256,
+        "motion_extraction": 2.5042049819603562,
+        "voxel_clustering": 5.4699520114809275,
+        "anchor_sampling": 1.522303035017103,
+        "difflow": 16.717359016183764,
+        "flow_recovery": 3.4802609588950872,
+        "total": 30.722967989277095
+      },
+      "metrics": {
+        "mean_epe_m": 0.07636229693889618,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02284619333222508,
+        "dynamic_mean_epe_m": 0.13595743477344513,
+        "motion_precision": 1.0,
+        "motion_recall": 0.042172816869126745
+      }
+    },
+    {
+      "source": 64,
+      "target": 65,
+      "included": true,
+      "source_points": 7756,
+      "target_points": 7759,
+      "source_moving": 222,
+      "target_moving": 383,
+      "source_clusters": 7,
+      "target_clusters": 9,
+      "timing_ms": {
+        "host_to_device": 0.3309070016257465,
+        "voxel_downsample": 0.8553299703635275,
+        "motion_extraction": 2.65910301823169,
+        "voxel_clustering": 6.941035971976817,
+        "anchor_sampling": 1.6392149846069515,
+        "difflow": 15.505029004998505,
+        "flow_recovery": 1.8474969547241926,
+        "total": 29.860079986974597
+      },
+      "metrics": {
+        "mean_epe_m": 0.03648454323410988,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.024627676233649254,
+        "dynamic_mean_epe_m": 0.06503656506538391,
+        "motion_precision": 1.0,
+        "motion_recall": 0.05102275339002528
+      }
+    },
+    {
+      "source": 65,
+      "target": 66,
+      "included": true,
+      "source_points": 7759,
+      "target_points": 7824,
+      "source_moving": 369,
+      "target_moving": 622,
+      "source_clusters": 10,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.30777498614043,
+        "voxel_downsample": 0.49531698459759355,
+        "motion_extraction": 2.9009419959038496,
+        "voxel_clustering": 5.700153007637709,
+        "anchor_sampling": 1.2265259865671396,
+        "difflow": 15.055791998747736,
+        "flow_recovery": 3.213796007912606,
+        "total": 28.986284974962473
+      },
+      "metrics": {
+        "mean_epe_m": 0.017067845910787582,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.030930835194885712,
+        "dynamic_mean_epe_m": 0.030394628643989563,
+        "motion_precision": 1.0,
+        "motion_recall": 0.08469130135414275
+      }
+    },
+    {
+      "source": 66,
+      "target": 67,
+      "included": true,
+      "source_points": 7824,
+      "target_points": 7691,
+      "source_moving": 422,
+      "target_moving": 628,
+      "source_clusters": 8,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.29921199893578887,
+        "voxel_downsample": 0.47056202311068773,
+        "motion_extraction": 2.0699320011772215,
+        "voxel_clustering": 5.532272974960506,
+        "anchor_sampling": 1.060509996023029,
+        "difflow": 17.844092973973602,
+        "flow_recovery": 2.2152610472403467,
+        "total": 29.576752975117415
+      },
+      "metrics": {
+        "mean_epe_m": 0.013910744339227676,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.052443249151109955,
+        "dynamic_mean_epe_m": 0.024690937250852585,
+        "motion_precision": 1.0,
+        "motion_recall": 0.09573502722323049
+      }
+    },
+    {
+      "source": 67,
+      "target": 68,
+      "included": true,
+      "source_points": 7691,
+      "target_points": 7784,
+      "source_moving": 480,
+      "target_moving": 751,
+      "source_clusters": 11,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 1.4636630075983703,
+        "voxel_downsample": 0.4916199832223356,
+        "motion_extraction": 2.6285259518772364,
+        "voxel_clustering": 5.548827000893652,
+        "anchor_sampling": 1.2586039956659079,
+        "difflow": 15.643819002434611,
+        "flow_recovery": 4.031296994071454,
+        "total": 31.15334897302091
+      },
+      "metrics": {
+        "mean_epe_m": 0.011079976335167885,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.0370924137532711,
+        "dynamic_mean_epe_m": 0.01982230693101883,
+        "motion_precision": 1.0,
+        "motion_recall": 0.11165387299371947
+      }
+    },
+    {
+      "source": 68,
+      "target": 69,
+      "included": true,
+      "source_points": 7784,
+      "target_points": 7724,
+      "source_moving": 596,
+      "target_moving": 825,
+      "source_clusters": 8,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.2986970357596874,
+        "voxel_downsample": 0.4723119782283902,
+        "motion_extraction": 2.0782919600605965,
+        "voxel_clustering": 6.019045016728342,
+        "anchor_sampling": 1.1171139776706696,
+        "difflow": 16.654082050081342,
+        "flow_recovery": 3.9126829942688346,
+        "total": 30.639044009149075
+      },
+      "metrics": {
+        "mean_epe_m": 0.013197886757552624,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.05194135010242462,
+        "dynamic_mean_epe_m": 0.023589517921209335,
+        "motion_precision": 1.0,
+        "motion_recall": 0.13685419058553386
+      }
+    },
+    {
+      "source": 69,
+      "target": 70,
+      "included": true,
+      "source_points": 7724,
+      "target_points": 7785,
+      "source_moving": 631,
+      "target_moving": 883,
+      "source_clusters": 8,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3421999863348901,
+        "voxel_downsample": 0.8285880321636796,
+        "motion_extraction": 2.7525030309334397,
+        "voxel_clustering": 7.001084042713046,
+        "anchor_sampling": 1.1196539853699505,
+        "difflow": 16.51221903739497,
+        "flow_recovery": 1.994496036786586,
+        "total": 30.629240965936333
+      },
+      "metrics": {
+        "mean_epe_m": 0.011774291284382343,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04711588006466625,
+        "dynamic_mean_epe_m": 0.02112043835222721,
+        "motion_precision": 1.0,
+        "motion_recall": 0.14653971202972596
+      }
+    },
+    {
+      "source": 70,
+      "target": 71,
+      "included": true,
+      "source_points": 7785,
+      "target_points": 7783,
+      "source_moving": 718,
+      "target_moving": 961,
+      "source_clusters": 11,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.6674439646303654,
+        "voxel_downsample": 0.46357099199667573,
+        "motion_extraction": 2.0296269794926047,
+        "voxel_clustering": 5.5457649868912995,
+        "anchor_sampling": 1.6282100114040077,
+        "difflow": 17.76849798625335,
+        "flow_recovery": 3.6558210267685354,
+        "total": 31.838803028222173
+      },
+      "metrics": {
+        "mean_epe_m": 0.009977294132113457,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03563319221138954,
+        "dynamic_mean_epe_m": 0.017790481448173523,
+        "motion_precision": 1.0,
+        "motion_recall": 0.16445258818140174
+      }
+    },
+    {
+      "source": 71,
+      "target": 72,
+      "included": true,
+      "source_points": 7783,
+      "target_points": 7805,
+      "source_moving": 763,
+      "target_moving": 1004,
+      "source_clusters": 8,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.2979700220748782,
+        "voxel_downsample": 0.4749450017698109,
+        "motion_extraction": 2.0412870217114687,
+        "voxel_clustering": 5.830253998283297,
+        "anchor_sampling": 1.3212190242484212,
+        "difflow": 16.244580037891865,
+        "flow_recovery": 3.001525008585304,
+        "total": 29.30366701912135
+      },
+      "metrics": {
+        "mean_epe_m": 0.010697795078158379,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04425236284732813,
+        "dynamic_mean_epe_m": 0.019079042598605156,
+        "motion_precision": 1.0,
+        "motion_recall": 0.174839596700275
+      }
+    },
+    {
+      "source": 72,
+      "target": 73,
+      "included": true,
+      "source_points": 7805,
+      "target_points": 7867,
+      "source_moving": 819,
+      "target_moving": 1082,
+      "source_clusters": 12,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3176719765178859,
+        "voxel_downsample": 0.47665799502283335,
+        "motion_extraction": 2.5503969518467784,
+        "voxel_clustering": 6.66569999884814,
+        "anchor_sampling": 1.7234940314665437,
+        "difflow": 17.0132769853808,
+        "flow_recovery": 3.799839993007481,
+        "total": 32.626838015858084
+      },
+      "metrics": {
+        "mean_epe_m": 0.01083138957619667,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03255128487944596,
+        "dynamic_mean_epe_m": 0.019226517528295517,
+        "motion_precision": 1.0,
+        "motion_recall": 0.18626336138276098
+      }
+    },
+    {
+      "source": 73,
+      "target": 74,
+      "included": true,
+      "source_points": 7867,
+      "target_points": 7765,
+      "source_moving": 889,
+      "target_moving": 1133,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3061179886572063,
+        "voxel_downsample": 0.4737330018542707,
+        "motion_extraction": 2.4751010350883007,
+        "voxel_clustering": 6.34028302738443,
+        "anchor_sampling": 1.0507170227356255,
+        "difflow": 16.1687089712359,
+        "flow_recovery": 2.5667399750091136,
+        "total": 29.475066054146737
+      },
+      "metrics": {
+        "mean_epe_m": 0.009050203487277031,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.028111619874835007,
+        "dynamic_mean_epe_m": 0.016064519062638283,
+        "motion_precision": 1.0,
+        "motion_recall": 0.20058664259927797
+      }
+    },
+    {
+      "source": 74,
+      "target": 75,
+      "included": true,
+      "source_points": 7765,
+      "target_points": 7836,
+      "source_moving": 939,
+      "target_moving": 1137,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3249169676564634,
+        "voxel_downsample": 0.477007997687906,
+        "motion_extraction": 2.066632965579629,
+        "voxel_clustering": 6.888703035656363,
+        "anchor_sampling": 1.473013951908797,
+        "difflow": 16.024045005906373,
+        "flow_recovery": 1.8999870517291129,
+        "total": 29.234762012492865
+      },
+      "metrics": {
+        "mean_epe_m": 0.011142007075250149,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03629877790808678,
+        "dynamic_mean_epe_m": 0.0197483878582716,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21433462679753482
+      }
+    },
+    {
+      "source": 75,
+      "target": 76,
+      "included": true,
+      "source_points": 7836,
+      "target_points": 7831,
+      "source_moving": 955,
+      "target_moving": 1163,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.2814520266838372,
+        "voxel_downsample": 0.4730450455099344,
+        "motion_extraction": 2.8349279891699553,
+        "voxel_clustering": 7.792513002641499,
+        "anchor_sampling": 1.0267560137435794,
+        "difflow": 15.569163020700216,
+        "flow_recovery": 1.6180250095203519,
+        "total": 29.67543399427086
+      },
+      "metrics": {
+        "mean_epe_m": 0.009752011857926846,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.032145027071237564,
+        "dynamic_mean_epe_m": 0.017226502299308777,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21528403967538323
+      }
+    },
+    {
+      "source": 76,
+      "target": 77,
+      "included": true,
+      "source_points": 7831,
+      "target_points": 7846,
+      "source_moving": 996,
+      "target_moving": 1228,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.2948130131699145,
+        "voxel_downsample": 0.4751610103994608,
+        "motion_extraction": 2.3136650561355054,
+        "voxel_clustering": 5.561180994845927,
+        "anchor_sampling": 1.861808996181935,
+        "difflow": 15.855151985306293,
+        "flow_recovery": 3.6871570046059787,
+        "total": 30.15467501245439
+      },
+      "metrics": {
+        "mean_epe_m": 0.008587212301790714,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.026971112936735153,
+        "dynamic_mean_epe_m": 0.015224466100335121,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22549241566674214
+      }
+    },
+    {
+      "source": 77,
+      "target": 78,
+      "included": true,
+      "source_points": 7846,
+      "target_points": 7808,
+      "source_moving": 996,
+      "target_moving": 1173,
+      "source_clusters": 5,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 1.4248460065573454,
+        "voxel_downsample": 0.48004399286583066,
+        "motion_extraction": 2.0710169919766486,
+        "voxel_clustering": 6.208967010024935,
+        "anchor_sampling": 1.7323970096185803,
+        "difflow": 15.944771992508322,
+        "flow_recovery": 1.4033829793334007,
+        "total": 29.347910021897405
+      },
+      "metrics": {
+        "mean_epe_m": 0.009584631770849228,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.031186779029667377,
+        "dynamic_mean_epe_m": 0.016937166452407837,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22432432432432434
+      }
+    },
+    {
+      "source": 78,
+      "target": 79,
+      "included": true,
+      "source_points": 7808,
+      "target_points": 7792,
+      "source_moving": 955,
+      "target_moving": 1149,
+      "source_clusters": 5,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.3498840378597379,
+        "voxel_downsample": 0.4716600524261594,
+        "motion_extraction": 2.0338590256869793,
+        "voxel_clustering": 5.925573001150042,
+        "anchor_sampling": 1.0687310132198036,
+        "difflow": 17.061842954717577,
+        "flow_recovery": 45.72247702162713,
+        "total": 72.72021402604878
+      },
+      "metrics": {
+        "mean_epe_m": 0.009188119322061539,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.029426049441099167,
+        "dynamic_mean_epe_m": 0.016323285177350044,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21729237770193402
+      }
+    },
+    {
+      "source": 79,
+      "target": 80,
+      "included": true,
+      "source_points": 7792,
+      "target_points": 7793,
+      "source_moving": 950,
+      "target_moving": 1158,
+      "source_clusters": 9,
+      "target_clusters": 10,
+      "timing_ms": {
+        "host_to_device": 1.1819109786301851,
+        "voxel_downsample": 0.48260099720209837,
+        "motion_extraction": 2.058974001556635,
+        "voxel_clustering": 5.588201980572194,
+        "anchor_sampling": 1.251959998626262,
+        "difflow": 16.249232983682305,
+        "flow_recovery": 3.026141959708184,
+        "total": 29.921414970885962
+      },
+      "metrics": {
+        "mean_epe_m": 0.012118630111217499,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03682285416871309,
+        "dynamic_mean_epe_m": 0.021623168140649796,
+        "motion_precision": 1.0,
+        "motion_recall": 0.21754064575223264
+      }
+    },
+    {
+      "source": 80,
+      "target": 81,
+      "included": true,
+      "source_points": 7793,
+      "target_points": 7805,
+      "source_moving": 965,
+      "target_moving": 1166,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3042630269192159,
+        "voxel_downsample": 0.48242101911455393,
+        "motion_extraction": 2.052252006251365,
+        "voxel_clustering": 6.457233976107091,
+        "anchor_sampling": 2.19256296986714,
+        "difflow": 16.469808004330844,
+        "flow_recovery": 2.7529499493539333,
+        "total": 30.79375100787729
+      },
+      "metrics": {
+        "mean_epe_m": 0.009257971309125423,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.029316565021872503,
+        "dynamic_mean_epe_m": 0.016412049531936646,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2195177434030937
+      }
+    },
+    {
+      "source": 81,
+      "target": 82,
+      "included": true,
+      "source_points": 7805,
+      "target_points": 7800,
+      "source_moving": 982,
+      "target_moving": 1203,
+      "source_clusters": 10,
+      "target_clusters": 9,
+      "timing_ms": {
+        "host_to_device": 0.30750001315027475,
+        "voxel_downsample": 0.4818530287593603,
+        "motion_extraction": 4.141644982155412,
+        "voxel_clustering": 7.078761991579086,
+        "anchor_sampling": 1.7963420250453055,
+        "difflow": 15.97197400406003,
+        "flow_recovery": 2.615995006635785,
+        "total": 32.484317023772746
+      },
+      "metrics": {
+        "mean_epe_m": 0.01001668255776167,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03287306427955626,
+        "dynamic_mean_epe_m": 0.01775612309575081,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22302975244151715
+      }
+    },
+    {
+      "source": 82,
+      "target": 83,
+      "included": true,
+      "source_points": 7800,
+      "target_points": 7836,
+      "source_moving": 1019,
+      "target_moving": 1220,
+      "source_clusters": 8,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.329220958519727,
+        "voxel_downsample": 0.48109301133081317,
+        "motion_extraction": 2.096467011142522,
+        "voxel_clustering": 6.436976022087038,
+        "anchor_sampling": 1.017610018607229,
+        "difflow": 16.10458001960069,
+        "flow_recovery": 3.2148630125448108,
+        "total": 29.758977994788438
+      },
+      "metrics": {
+        "mean_epe_m": 0.00908514391630888,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.027810762077569946,
+        "dynamic_mean_epe_m": 0.016050763428211212,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23080407701019254
+      }
+    },
+    {
+      "source": 83,
+      "target": 84,
+      "included": true,
+      "source_points": 7836,
+      "target_points": 7825,
+      "source_moving": 1055,
+      "target_moving": 1269,
+      "source_clusters": 8,
+      "target_clusters": 9,
+      "timing_ms": {
+        "host_to_device": 0.27991796378046274,
+        "voxel_downsample": 0.4582009860314429,
+        "motion_extraction": 2.0835220348089933,
+        "voxel_clustering": 5.587828054558486,
+        "anchor_sampling": 1.6215629875659943,
+        "difflow": 17.518374021165073,
+        "flow_recovery": 2.2142629604786634,
+        "total": 29.842538002412766
+      },
+      "metrics": {
+        "mean_epe_m": 0.011960368603467941,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04833743069320917,
+        "dynamic_mean_epe_m": 0.021242395043373108,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23912058023572075
+      }
+    },
+    {
+      "source": 84,
+      "target": 85,
+      "included": true,
+      "source_points": 7825,
+      "target_points": 7777,
+      "source_moving": 1022,
+      "target_moving": 1212,
+      "source_clusters": 6,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3536909935064614,
+        "voxel_downsample": 0.4952779854647815,
+        "motion_extraction": 2.510413993149996,
+        "voxel_clustering": 6.582675036042929,
+        "anchor_sampling": 1.0304960305802524,
+        "difflow": 15.884957974776626,
+        "flow_recovery": 2.049524977337569,
+        "total": 28.993821004405618
+      },
+      "metrics": {
+        "mean_epe_m": 0.010608864016830921,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.036068279296159744,
+        "dynamic_mean_epe_m": 0.018790028989315033,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23132639203259395
+      }
+    },
+    {
+      "source": 85,
+      "target": 86,
+      "included": true,
+      "source_points": 7777,
+      "target_points": 7777,
+      "source_moving": 1046,
+      "target_moving": 1223,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.29788498068228364,
+        "voxel_downsample": 0.4684669547714293,
+        "motion_extraction": 2.036157005932182,
+        "voxel_clustering": 6.339342973660678,
+        "anchor_sampling": 1.3690140331164002,
+        "difflow": 16.72181999310851,
+        "flow_recovery": 3.5125940339639783,
+        "total": 30.828794988337904
+      },
+      "metrics": {
+        "mean_epe_m": 0.009512976743280888,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.02917649783194065,
+        "dynamic_mean_epe_m": 0.016825657337903976,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2378894700932454
+      }
+    },
+    {
+      "source": 86,
+      "target": 87,
+      "included": true,
+      "source_points": 7777,
+      "target_points": 7737,
+      "source_moving": 1021,
+      "target_moving": 1201,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.2891999902203679,
+        "voxel_downsample": 0.4749770159833133,
+        "motion_extraction": 2.152284956537187,
+        "voxel_clustering": 6.213624961674213,
+        "anchor_sampling": 1.2121019535697997,
+        "difflow": 15.91280201682821,
+        "flow_recovery": 1.446899026632309,
+        "total": 27.780514035839587
+      },
+      "metrics": {
+        "mean_epe_m": 0.009602469392120838,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.029674556106328964,
+        "dynamic_mean_epe_m": 0.017084971070289612,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23358499199267901
+      }
+    },
+    {
+      "source": 87,
+      "target": 88,
+      "included": true,
+      "source_points": 7737,
+      "target_points": 7794,
+      "source_moving": 987,
+      "target_moving": 1190,
+      "source_clusters": 4,
+      "target_clusters": 5,
+      "timing_ms": {
+        "host_to_device": 0.3245639964006841,
+        "voxel_downsample": 0.4869400290772319,
+        "motion_extraction": 2.088500012177974,
+        "voxel_clustering": 5.8842559810727835,
+        "anchor_sampling": 1.8006259924732149,
+        "difflow": 16.59473596373573,
+        "flow_recovery": 1.9651430193334818,
+        "total": 29.255306988488883
+      },
+      "metrics": {
+        "mean_epe_m": 0.009656178764998913,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.030215398967266077,
+        "dynamic_mean_epe_m": 0.017190486192703247,
+        "motion_precision": 1.0,
+        "motion_recall": 0.2271053842613898
+      }
+    },
+    {
+      "source": 88,
+      "target": 89,
+      "included": true,
+      "source_points": 7794,
+      "target_points": 7804,
+      "source_moving": 1002,
+      "target_moving": 1206,
+      "source_clusters": 6,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 2.7264559757895768,
+        "voxel_downsample": 0.5073909997008741,
+        "motion_extraction": 2.081696002278477,
+        "voxel_clustering": 5.670082988217473,
+        "anchor_sampling": 1.3801580062136054,
+        "difflow": 16.247743042185903,
+        "flow_recovery": 2.2770880023017526,
+        "total": 31.00107697537169
+      },
+      "metrics": {
+        "mean_epe_m": 0.01095349621027708,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03363688867539161,
+        "dynamic_mean_epe_m": 0.019393809139728546,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22762380736029078
+      }
+    },
+    {
+      "source": 89,
+      "target": 90,
+      "included": true,
+      "source_points": 7804,
+      "target_points": 7729,
+      "source_moving": 1012,
+      "target_moving": 1172,
+      "source_clusters": 7,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3275409690104425,
+        "voxel_downsample": 0.4788819933310151,
+        "motion_extraction": 2.0781480125151575,
+        "voxel_clustering": 5.617349990643561,
+        "anchor_sampling": 1.0777779971249402,
+        "difflow": 16.843402991071343,
+        "flow_recovery": 2.1093430113978684,
+        "total": 28.630294022150338
+      },
+      "metrics": {
+        "mean_epe_m": 0.010254398919641972,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03487438000738615,
+        "dynamic_mean_epe_m": 0.01818344183266163,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22994773915019315
+      }
+    },
+    {
+      "source": 90,
+      "target": 91,
+      "included": true,
+      "source_points": 7729,
+      "target_points": 7772,
+      "source_moving": 984,
+      "target_moving": 1193,
+      "source_clusters": 7,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.29206002363935113,
+        "voxel_downsample": 0.46715798089280725,
+        "motion_extraction": 2.059222024399787,
+        "voxel_clustering": 7.61585496366024,
+        "anchor_sampling": 1.6358300345018506,
+        "difflow": 16.448481008410454,
+        "flow_recovery": 1.821366953663528,
+        "total": 30.417447967920452
+      },
+      "metrics": {
+        "mean_epe_m": 0.01001923717558384,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03262367248535153,
+        "dynamic_mean_epe_m": 0.017880093306303024,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22719926114061417
+      }
+    },
+    {
+      "source": 91,
+      "target": 92,
+      "included": true,
+      "source_points": 7772,
+      "target_points": 7796,
+      "source_moving": 1007,
+      "target_moving": 1187,
+      "source_clusters": 5,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.2780960057862103,
+        "voxel_downsample": 0.457238988019526,
+        "motion_extraction": 2.5844110059551895,
+        "voxel_clustering": 6.228233978617936,
+        "anchor_sampling": 1.0844090138562024,
+        "difflow": 15.58329799445346,
+        "flow_recovery": 2.9048710130155087,
+        "total": 29.20040104072541
+      },
+      "metrics": {
+        "mean_epe_m": 0.010917805135250092,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04144611172378061,
+        "dynamic_mean_epe_m": 0.019448352977633476,
+        "motion_precision": 1.0,
+        "motion_recall": 0.23080449232179692
+      }
+    },
+    {
+      "source": 92,
+      "target": 93,
+      "included": true,
+      "source_points": 7796,
+      "target_points": 7768,
+      "source_moving": 987,
+      "target_moving": 1114,
+      "source_clusters": 9,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.28669199673458934,
+        "voxel_downsample": 0.47080498188734055,
+        "motion_extraction": 2.067206020001322,
+        "voxel_clustering": 5.567054962739348,
+        "anchor_sampling": 1.132882956881076,
+        "difflow": 18.158102000597864,
+        "flow_recovery": 2.5639149826020002,
+        "total": 30.321530008222908
+      },
+      "metrics": {
+        "mean_epe_m": 0.009603491984307766,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.031013759784400463,
+        "dynamic_mean_epe_m": 0.016984760761260986,
+        "motion_precision": 1.0,
+        "motion_recall": 0.22391107078039926
+      }
+    },
+    {
+      "source": 93,
+      "target": 94,
+      "included": true,
+      "source_points": 7768,
+      "target_points": 7772,
+      "source_moving": 861,
+      "target_moving": 1066,
+      "source_clusters": 6,
+      "target_clusters": 4,
+      "timing_ms": {
+        "host_to_device": 0.2933729556389153,
+        "voxel_downsample": 0.47019601333886385,
+        "motion_extraction": 2.0625439938157797,
+        "voxel_clustering": 8.23622802272439,
+        "anchor_sampling": 1.3116819900460541,
+        "difflow": 15.771217993460596,
+        "flow_recovery": 1.591501000802964,
+        "total": 29.81211297446862
+      },
+      "metrics": {
+        "mean_epe_m": 0.012239796109497547,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.05060751233249902,
+        "dynamic_mean_epe_m": 0.021937869489192963,
+        "motion_precision": 1.0,
+        "motion_recall": 0.19866174434702352
+      }
+    },
+    {
+      "source": 94,
+      "target": 95,
+      "included": true,
+      "source_points": 7772,
+      "target_points": 7705,
+      "source_moving": 928,
+      "target_moving": 1046,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.3020080039277673,
+        "voxel_downsample": 0.770513026509434,
+        "motion_extraction": 2.0612289663404226,
+        "voxel_clustering": 6.117716955486685,
+        "anchor_sampling": 0.9738979861140251,
+        "difflow": 16.536621958948672,
+        "flow_recovery": 1.3675009831786156,
+        "total": 28.20721099851653
+      },
+      "metrics": {
+        "mean_epe_m": 0.00957154855132103,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.031402814947068675,
+        "dynamic_mean_epe_m": 0.017040817067027092,
+        "motion_precision": 0.9978448275862069,
+        "motion_recall": 0.21243404450562056
+      }
+    },
+    {
+      "source": 95,
+      "target": 96,
+      "included": true,
+      "source_points": 7705,
+      "target_points": 7662,
+      "source_moving": 841,
+      "target_moving": 964,
+      "source_clusters": 5,
+      "target_clusters": 6,
+      "timing_ms": {
+        "host_to_device": 0.26695296401157975,
+        "voxel_downsample": 0.4489089478738606,
+        "motion_extraction": 2.2794180549681187,
+        "voxel_clustering": 6.41166401328519,
+        "anchor_sampling": 0.9629469714127481,
+        "difflow": 17.118735995609313,
+        "flow_recovery": 2.589189971331507,
+        "total": 30.18938598688692
+      },
+      "metrics": {
+        "mean_epe_m": 0.010981632396578789,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04169275537133216,
+        "dynamic_mean_epe_m": 0.01966383494436741,
+        "motion_precision": 1.0,
+        "motion_recall": 0.19544503834534047
+      }
+    },
+    {
+      "source": 96,
+      "target": 97,
+      "included": true,
+      "source_points": 7662,
+      "target_points": 7707,
+      "source_moving": 847,
+      "target_moving": 996,
+      "source_clusters": 8,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.2621890162117779,
+        "voxel_downsample": 0.8446360006928444,
+        "motion_extraction": 3.01737297559157,
+        "voxel_clustering": 5.626872007269412,
+        "anchor_sampling": 1.1302009806968272,
+        "difflow": 16.093502985313535,
+        "flow_recovery": 1.9521520007401705,
+        "total": 28.99809804512188
+      },
+      "metrics": {
+        "mean_epe_m": 0.010731547139585018,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03977268282324075,
+        "dynamic_mean_epe_m": 0.019225936383008957,
+        "motion_precision": 0.9976387249114522,
+        "motion_recall": 0.1979386273131881
+      }
+    },
+    {
+      "source": 97,
+      "target": 98,
+      "included": true,
+      "source_points": 7707,
+      "target_points": 7695,
+      "source_moving": 830,
+      "target_moving": 973,
+      "source_clusters": 8,
+      "target_clusters": 8,
+      "timing_ms": {
+        "host_to_device": 0.301833963021636,
+        "voxel_downsample": 0.44293998507782817,
+        "motion_extraction": 2.044262015260756,
+        "voxel_clustering": 5.607118015177548,
+        "anchor_sampling": 1.3787559582851827,
+        "difflow": 16.093983955215663,
+        "flow_recovery": 2.6317599695175886,
+        "total": 28.597589989658445
+      },
+      "metrics": {
+        "mean_epe_m": 0.009035957977175713,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.03131779283285141,
+        "dynamic_mean_epe_m": 0.01625586487352848,
+        "motion_precision": 1.0,
+        "motion_recall": 0.19374416433239963
+      }
+    },
+    {
+      "source": 98,
+      "target": 99,
+      "included": true,
+      "source_points": 7695,
+      "target_points": 7625,
+      "source_moving": 858,
+      "target_moving": 943,
+      "source_clusters": 8,
+      "target_clusters": 7,
+      "timing_ms": {
+        "host_to_device": 0.3402729635126889,
+        "voxel_downsample": 0.5051739863120019,
+        "motion_extraction": 2.1076760021969676,
+        "voxel_clustering": 6.823581992648542,
+        "anchor_sampling": 1.112630998250097,
+        "difflow": 17.31335202930495,
+        "flow_recovery": 2.4402010021731257,
+        "total": 30.718313006218523
+      },
+      "metrics": {
+        "mean_epe_m": 0.010471057146787643,
+        "median_epe_m": 0.006666666828095913,
+        "p95_epe_m": 0.04346508011221883,
+        "dynamic_mean_epe_m": 0.01876118592917919,
+        "motion_precision": 0.9988344988344988,
+        "motion_recall": 0.19967381174277726
+      }
+    }
+  ]
+}

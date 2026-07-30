@@ -137,7 +137,7 @@ class PointConvEncoder(nn.Module):
         self.level0_1 = Conv1d(32, 64)
 
         self.level1 = PointConvD(
-            2048,
+            1024,
             feat_nei,
             64 + 3,
             64,
@@ -177,7 +177,7 @@ class PointConvEncoder(nn.Module):
         self.register_buffer(
             "_identity_fps_l1",
             torch.arange(
-                2048,
+                1024,
                 dtype=torch.int32,
             ).unsqueeze(0),
             persistent=False,
@@ -206,7 +206,7 @@ class PointConvEncoder(nn.Module):
             .contiguous()
         )
 
-    def _forward_eval_2048(
+    def _forward_eval(
         self,
         xyz: torch.Tensor,
         color: torch.Tensor,
@@ -226,7 +226,7 @@ class PointConvEncoder(nn.Module):
         )
         feat_l0_1 = self.level0_1(feat_l0)
 
-        # Level 1 requests the complete 2048-point set. With identity FPS,
+        # Level 1 requests the complete 1024-point set. With identity FPS,
         # its query geometry is exactly the level-0 geometry.
         pc_l1 = xyz
         fps_l1 = self._identity_fps_indices(
@@ -274,12 +274,12 @@ class PointConvEncoder(nn.Module):
             raise RuntimeError(
                 "This minimal model is inference-only. Call model.eval()."
             )
-        if xyz.shape[2] != 2048:
+        if xyz.shape[2] < 1024:
             raise ValueError(
-                "The optimized deployment model requires exactly "
-                f"2048 points, received {xyz.shape[2]}."
+                "The optimized deployment model requires more that "
+                f"1024 points, received {xyz.shape[2]}."
             )
-        return self._forward_eval_2048(xyz, color)
+        return self._forward_eval(xyz, color)
 
 
 
@@ -486,12 +486,6 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
     def _apply(self, fn):
         self._eval_time_cache.clear()
         return super()._apply(fn)
-
-
-
-
-
-
 
     def _prepare_neighbor_context(self, xyz1, xyz2):
         """Prepare geometry-only self-neighborhood data reusable across calls."""
@@ -1096,7 +1090,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         model: PointConvBidirection,
         *,
         batch_size: int = 1,
-        num_points: int = 2048,
+        num_points: int = 1024,
         uncertainty: float = 0.2,
         warmup: int = 10,
         enable_tf32: bool = True,
@@ -1104,10 +1098,10 @@ class DifFlow3DStreamingCudaGraphRunner:
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("Streaming CUDA Graph inference requires CUDA.")
-        if batch_size < 1 or num_points != 2048 or warmup < 1:
+        if batch_size < 1 or num_points < 1024 or warmup < 1:
             raise ValueError(
                 "The optimized streaming runner currently requires "
-                "num_points=2048 and positive batch_size/warmup."
+                "num_points >= 1024 and positive batch_size/warmup."
             )
         if model.training:
             model.eval()
