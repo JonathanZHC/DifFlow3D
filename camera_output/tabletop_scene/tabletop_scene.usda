@@ -1,0 +1,659 @@
+#usda 1.0
+(
+    endTimeCode = 1000000
+    metersPerUnit = 1
+    startTimeCode = 0
+    timeCodesPerSecond = 60
+    upAxis = "Z"
+)
+
+def "Render" (
+    hide_in_stage_window = true
+    no_delete = true
+)
+{
+    def "OmniverseKit"
+    {
+        def "HydraTextures" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            def RenderProduct "omni_kit_widget_viewport_ViewportTexture_0" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </OmniverseKit_Persp>
+                token omni:rtx:ambientOcclusion:denoiserMode = "none"
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:debug:view:pixelDebug:enableFixedTextPos = 1
+                token omni:rtx:directLighting:sampledLighting:denoisingTechnique = "None"
+                bool omni:rtx:indirectDiffuse:denoiser:enabled = 0
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:adaptiveSampling:filterError = 0
+                uint omni:rtx:pt:adaptiveSampling:fixedSppIterations = 2
+                uint omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                uint omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                bool omni:rtx:reflections:denoiser:enabled = 0
+                token omni:rtx:rendermode = "RealTimePathTracing"
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                int omni:rtx:rt:sss:samples = 1
+                float omni:rtx:rtpt:modulatingRoughnessThreshold = 0.08
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (640, 480)
+            }
+
+            def RenderProduct "camera_0_render_product" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </World/Cameras/camera_0>
+                token omni:rtx:ambientOcclusion:denoiserMode = "none"
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:debug:view:pixelDebug:enableFixedTextPos = 1
+                token omni:rtx:directLighting:sampledLighting:denoisingTechnique = "None"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:indirectDiffuse:denoiser:enabled = 0
+                string[] omni:rtx:material:db:flattener:ior_constant = ["ior_constant", "glass_ior"]
+                string[] omni:rtx:material:db:flattener:reflection_roughness_constant = ["reflection_roughness_constant", "frosting_roughness"]
+                string[] omni:rtx:material:db:flattener:transmittance_color = ["transmittance_color", "glass_color"]
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:aa:op = "dlss"
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:adaptiveSampling:filterError = 0
+                uint omni:rtx:pt:adaptiveSampling:fixedSppIterations = 2
+                int omni:rtx:pt:clampSpp = 64
+                bool omni:rtx:pt:denoising:enabled = 1
+                uint omni:rtx:pt:limits:maxBounces = 3
+                uint omni:rtx:pt:limits:maxGlossyBounces = 3
+                uint omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                uint omni:rtx:pt:maxVolumeBounces = 15
+                uint omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                int omni:rtx:pt:samplesPerIteration = 64
+                uint omni:rtx:pt:samplesPerPixel = 64
+                bool omni:rtx:raytracing:picking:occluded:enabled = 0
+                bool omni:rtx:reflections:denoiser:enabled = 0
+                token omni:rtx:rendermode = "RealTimePathTracing"
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                int omni:rtx:rt:iesTextureRes = 1024
+                bool omni:rtx:rt:indexdirect:enabled = 1
+                token omni:rtx:rt:indexdirect:NanoVDBCompression = "None"
+                bool omni:rtx:rt:indexdirect:NanoVDBCompressionDither = 1
+                bool omni:rtx:rt:indexdirect:showDetailledMemoryInfo = 0
+                int omni:rtx:rt:indexdirect:svo:brickBorder = 0
+                int3 omni:rtx:rt:indexdirect:svo:brickSize = (32, 32, 32)
+                token omni:rtx:rt:indexdirect:volumeType = "IndeXSVO"
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                int omni:rtx:rt:sss:samples = 1
+                uint omni:rtx:rtpt:maxBounces = 3
+                uint omni:rtx:rtpt:maxSpecularAndTransmissionBounces = 3
+                uint omni:rtx:rtpt:maxVolumeBounces = 15
+                float omni:rtx:rtpt:modulatingRoughnessThreshold = 0.08
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                int omni:rtx:scene:hydra:subdivision:refinementLevel = 0
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (640, 480)
+            }
+
+            def RenderProduct "camera_1_render_product" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </World/Cameras/camera_1>
+                token omni:rtx:ambientOcclusion:denoiserMode = "none"
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:debug:view:pixelDebug:enableFixedTextPos = 1
+                token omni:rtx:directLighting:sampledLighting:denoisingTechnique = "None"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:indirectDiffuse:denoiser:enabled = 0
+                string[] omni:rtx:material:db:flattener:ior_constant = ["ior_constant", "glass_ior"]
+                string[] omni:rtx:material:db:flattener:reflection_roughness_constant = ["reflection_roughness_constant", "frosting_roughness"]
+                string[] omni:rtx:material:db:flattener:transmittance_color = ["transmittance_color", "glass_color"]
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:aa:op = "dlss"
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:adaptiveSampling:filterError = 0
+                uint omni:rtx:pt:adaptiveSampling:fixedSppIterations = 2
+                int omni:rtx:pt:clampSpp = 64
+                bool omni:rtx:pt:denoising:enabled = 1
+                uint omni:rtx:pt:limits:maxBounces = 3
+                uint omni:rtx:pt:limits:maxGlossyBounces = 3
+                uint omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                uint omni:rtx:pt:maxVolumeBounces = 15
+                uint omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                int omni:rtx:pt:samplesPerIteration = 64
+                uint omni:rtx:pt:samplesPerPixel = 64
+                bool omni:rtx:raytracing:picking:occluded:enabled = 0
+                bool omni:rtx:reflections:denoiser:enabled = 0
+                token omni:rtx:rendermode = "RealTimePathTracing"
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                int omni:rtx:rt:iesTextureRes = 1024
+                bool omni:rtx:rt:indexdirect:enabled = 1
+                token omni:rtx:rt:indexdirect:NanoVDBCompression = "None"
+                bool omni:rtx:rt:indexdirect:NanoVDBCompressionDither = 1
+                bool omni:rtx:rt:indexdirect:showDetailledMemoryInfo = 0
+                int omni:rtx:rt:indexdirect:svo:brickBorder = 0
+                int3 omni:rtx:rt:indexdirect:svo:brickSize = (32, 32, 32)
+                token omni:rtx:rt:indexdirect:volumeType = "IndeXSVO"
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                int omni:rtx:rt:sss:samples = 1
+                uint omni:rtx:rtpt:maxBounces = 3
+                uint omni:rtx:rtpt:maxSpecularAndTransmissionBounces = 3
+                uint omni:rtx:rtpt:maxVolumeBounces = 15
+                float omni:rtx:rtpt:modulatingRoughnessThreshold = 0.08
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                int omni:rtx:scene:hydra:subdivision:refinementLevel = 0
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (640, 480)
+            }
+        }
+    }
+
+    def RenderSettings "OmniverseGlobalRenderSettings" (
+        prepend apiSchemas = ["OmniRtxSettingsGlobalRtAdvancedAPI_1", "OmniRtxSettingsGlobalPtAdvancedAPI_1"]
+        no_delete = true
+    )
+    {
+        rel products = [
+            </Render/OmniverseKit/HydraTextures/omni_kit_widget_viewport_ViewportTexture_0>,
+            </Render/OmniverseKit/HydraTextures/camera_0_render_product>,
+            </Render/OmniverseKit/HydraTextures/camera_1_render_product>,
+        ]
+    }
+
+    def "Vars"
+    {
+        def RenderVar "LdrColor" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            uniform string sourceName = "LdrColor"
+            uniform token sourceType = "raw"
+        }
+    }
+}
+
+over "OmniverseKit_Persp"
+{
+    float exposure:fStop = 5
+    float exposure:responsivity = 1.1026709
+    float exposure:time = 0.02
+}
+
+def Xform "World"
+{
+    def Xform "Table"
+    {
+        def Cube "Top" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Wood>
+            double size = 1
+            float3 xformOp:scale = (1.6, 1.15, 0.08)
+            double3 xformOp:translate = (0, 0, 0.75)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Leg_0" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Wood>
+            double size = 1
+            float3 xformOp:scale = (0.08, 0.08, 0.71)
+            double3 xformOp:translate = (-0.7, -0.48, 0.355)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Leg_1" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Wood>
+            double size = 1
+            float3 xformOp:scale = (0.08, 0.08, 0.71)
+            double3 xformOp:translate = (0.7, -0.48, 0.355)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Leg_2" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Wood>
+            double size = 1
+            float3 xformOp:scale = (0.08, 0.08, 0.71)
+            double3 xformOp:translate = (-0.7, 0.48, 0.355)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Leg_3" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Wood>
+            double size = 1
+            float3 xformOp:scale = (0.08, 0.08, 0.71)
+            double3 xformOp:translate = (0.7, 0.48, 0.355)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "Objects"
+    {
+        def Cube "CerealBox" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Yellow>
+            double size = 1
+            float3 xformOp:rotateXYZ = (0, 0, -12)
+            float3 xformOp:scale = (0.24, 0.11, 0.36)
+            double3 xformOp:translate = (-0.38, 0.17, 0.97)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+        }
+
+        def Cylinder "FoodCan" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.19
+            rel material:binding = </World/Materials/Metal>
+            double radius = 0.07
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0.02, 0.25, 0.885)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Xform "Bottle"
+        {
+            def Cylinder "Body" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.26
+                rel material:binding = </World/Materials/Green>
+                double radius = 0.065
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.39, 0.18, 0.92)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Shoulder" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Materials/Green>
+                double radius = 0.066
+                float3 xformOp:scale = (1, 1, 0.55)
+                double3 xformOp:translate = (0.39, 0.18, 1.0550000000000002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cylinder "Neck" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.1
+                rel material:binding = </World/Materials/Green>
+                double radius = 0.027
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.39, 0.18, 1.105)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cylinder "Cap" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.026
+                rel material:binding = </World/Materials/Dark>
+                double radius = 0.031
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.39, 0.18, 1.162)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Xform "Mug"
+        {
+            def Cylinder "Body" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.13
+                rel material:binding = </World/Materials/Blue>
+                double radius = 0.082
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.18, -0.2, 0.855)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "HandleTop" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Materials/Blue>
+                double size = 1
+                float3 xformOp:scale = (0.035, 0.09, 0.025)
+                double3 xformOp:translate = (-0.18, -0.302, 0.895)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "HandleBottom" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Materials/Blue>
+                double size = 1
+                float3 xformOp:scale = (0.035, 0.09, 0.025)
+                double3 xformOp:translate = (-0.18, -0.302, 0.8250000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "HandleOuter" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Materials/Blue>
+                double size = 1
+                float3 xformOp:scale = (0.035, 0.025, 0.095)
+                double3 xformOp:translate = (-0.18, -0.347, 0.8600000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Sphere "Apple" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </World/Materials/Red>
+            double radius = 0.068
+            float3 xformOp:scale = (1, 1, 0.92)
+            double3 xformOp:translate = (0.18, -0.2, 0.8580000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cylinder "AppleStem" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.035
+            rel material:binding = </World/Materials/Wood>
+            double radius = 0.008
+            float3 xformOp:rotateXYZ = (8, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0.18, -0.2, 0.927)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+        }
+
+        def Xform "Bowl"
+        {
+            def Cylinder "Outer" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.09
+                rel material:binding = </World/Materials/White>
+                double radius = 0.14
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.48, -0.22, 0.8350000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cylinder "Inner" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                double height = 0.012
+                rel material:binding = </World/Materials/Dark>
+                double radius = 0.105
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.48, -0.22, 0.884)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+    }
+
+    def Xform "Cameras"
+    {
+        def Camera "camera_0" (
+            prepend apiSchemas = ["OmniRtxCameraAutoExposureAPI_1", "OmniRtxCameraExposureAPI_1"]
+        )
+        {
+            float2 clippingRange = (0.05, 10)
+            float exposure:fStop = 5
+            float exposure:responsivity = 1.1026709
+            float exposure:time = 0.02
+            float focalLength = 24
+            float horizontalAperture = 20.955
+            float horizontalApertureOffset = 0
+            float verticalAperture = 15.71625
+            float verticalApertureOffset = 0
+            quatf xformOp:orient = (0.7458552, 0.559623, 0.21682446, 0.28897965)
+            double3 xformOp:translate = (1.55, -1.7, 1.55)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Camera "camera_1" (
+            prepend apiSchemas = ["OmniRtxCameraAutoExposureAPI_1", "OmniRtxCameraExposureAPI_1"]
+        )
+        {
+            float2 clippingRange = (0.05, 10)
+            float exposure:fStop = 5
+            float exposure:responsivity = 1.1026709
+            float exposure:time = 0.02
+            float focalLength = 28
+            float horizontalAperture = 20.955
+            float horizontalApertureOffset = 0
+            float verticalAperture = 15.71625
+            float verticalApertureOffset = 0
+            quatf xformOp:orient = (0.7230684, 0.5750873, -0.23820898, -0.29950476)
+            double3 xformOp:translate = (-1.45, -1.45, 1.35)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+    }
+
+    def Xform "Lights"
+    {
+        def DomeLight "Dome"
+        {
+            color3f inputs:color = (0.95, 0.97, 1)
+            float inputs:intensity = 500
+        }
+
+        def DistantLight "Key"
+        {
+            float inputs:angle = 1
+            float inputs:intensity = 2600
+            float3 xformOp:rotateXYZ = (-38, 20, 24)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 3.5)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+        }
+
+        def SphereLight "Fill"
+        {
+            color3f inputs:color = (1, 0.8, 0.68)
+            float inputs:intensity = 18000
+            float inputs:radius = 0.35
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (-1.4, -1, 2.3)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "Materials"
+    {
+        def Material "Ground"
+        {
+            token outputs:surface.connect = </World/Materials/Ground/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.18, 0.2, 0.23)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.85
+                token outputs:surface
+            }
+        }
+
+        def Material "Wood"
+        {
+            token outputs:surface.connect = </World/Materials/Wood/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.42, 0.2, 0.07)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.58
+                token outputs:surface
+            }
+        }
+
+        def Material "Red"
+        {
+            token outputs:surface.connect = </World/Materials/Red/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.72, 0.04, 0.03)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.35
+                token outputs:surface
+            }
+        }
+
+        def Material "Green"
+        {
+            token outputs:surface.connect = </World/Materials/Green/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.04, 0.5, 0.1)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.32
+                token outputs:surface
+            }
+        }
+
+        def Material "Blue"
+        {
+            token outputs:surface.connect = </World/Materials/Blue/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.04, 0.16, 0.72)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.3
+                token outputs:surface
+            }
+        }
+
+        def Material "Yellow"
+        {
+            token outputs:surface.connect = </World/Materials/Yellow/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.9, 0.55, 0.03)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.38
+                token outputs:surface
+            }
+        }
+
+        def Material "White"
+        {
+            token outputs:surface.connect = </World/Materials/White/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.82, 0.84, 0.88)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.42
+                token outputs:surface
+            }
+        }
+
+        def Material "Metal"
+        {
+            token outputs:surface.connect = </World/Materials/Metal/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.5, 0.52, 0.55)
+                float inputs:metallic = 0.75
+                float inputs:roughness = 0.22
+                token outputs:surface
+            }
+        }
+
+        def Material "Dark"
+        {
+            token outputs:surface.connect = </World/Materials/Dark/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.06, 0.07, 0.08)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.55
+                token outputs:surface
+            }
+        }
+    }
+
+    def Cube "Ground" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/Ground>
+        double size = 1
+        float3 xformOp:scale = (5, 5, 0.05)
+        double3 xformOp:translate = (0, 0, -0.025)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+

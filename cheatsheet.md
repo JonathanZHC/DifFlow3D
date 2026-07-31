@@ -1,7 +1,66 @@
 # Build the docker:
 
-docker build -t difflow3d-test .
+docker build -f Dockerfile -t difflow3d-isaacsim:6.0.1 .
 
+
+# Run the docker:
+
+docker run --rm -it \
+  --name isaacscene-gui \
+  --gpus all \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e ACCEPT_EULA=Y \
+  -e PRIVACY_CONSENT=Y \
+  -e OMNICLIENT_HUB_MODE=disabled \
+  -e DISPLAY="$DISPLAY" \
+  -e HOME=/isaac-sim \
+  -e ROS_DOMAIN_ID=100 \
+  -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v "$HOME/docker/isaac-sim/cache/main:/isaac-sim/.cache:rw" \
+  -v "$HOME/docker/isaac-sim/cache/computecache:/isaac-sim/.nv/ComputeCache:rw" \
+  -v "$HOME/docker/isaac-sim/logs:/isaac-sim/.nvidia-omniverse/logs:rw" \
+  -v "$HOME/docker/isaac-sim/config:/isaac-sim/.nvidia-omniverse/config:rw" \
+  -v "$HOME/docker/isaac-sim/data:/isaac-sim/.local/share/ov/data:rw" \
+  -v "$HOME/docker/isaac-sim/pkg:/isaac-sim/.local/share/ov/pkg:rw" \
+  -v "$PWD/isaacscene:/workspace/isaacscene:rw" \
+  -v "$PWD/camera_output:/workspace/camera_output:rw" \
+  difflow3d-isaacsim:6.0.1 \
+  /bin/bash
+
+# Run isaacsim to generate the scene:
+
+/isaac-sim/python.sh \
+  /workspace/isaacscene/run_isaacsim.py \
+    --width 640 \
+    --height 480 \
+    --camera-hz 30 \
+    --max-depth 5.0 \
+    --corrupt \
+    --headless \
+    --no-isaac-visualization
+
+# Run Rviz for pcd visualization:
+
+rviz2 -d /workspace/isaacscene/isaacscene.rviz
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## The rest is for old pipeline
 
 # Run the docker:
 
@@ -10,7 +69,7 @@ docker run --rm -it \
   --network host \
   --ipc=host \
   -e DISPLAY="$DISPLAY" \
-  -e ROS_DOMAIN_ID=117 \
+  -e ROS_DOMAIN_ID=100 \
   -v "$PWD:/workspace" \
   difflow3d-test
 
@@ -74,14 +133,14 @@ python3 test_voxel_fps_difflow3d.py \
     --model-module model_difflow \
     --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
     --all-points 300000 \
-    --voxel-resolution 0.010 \
+    --voxel-resolution 0.020 \
     --enable-second-downsample \
     --second-voxel-resolution 0 \
     --second-candidate-ratio 2.5 \
     --fps-points 2048 \
     --difflow-iters 4 \
     --recovery-method softmax \
-    --recovery-softmax-sigma 0.025 \
+    --recovery-softmax-sigma 0.05 \
     --frames 300 \
     --sensor-hz 30 \
     --warmup 2 \
