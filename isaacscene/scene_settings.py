@@ -1,27 +1,53 @@
 #!/usr/bin/env python3
-"""程序化创建桌面日常物体场景。
+"""Build one of two clean tabletop scene configurations.
 
-本模块不创建 SimulationApp，也不创建相机或 ROS 节点。
-必须在 run_isaacsim.py 创建 SimulationApp 之后导入。
+Modes
+-----
+``static``
+    The original tabletop scene with six stationary daily objects.
+
+``dynamic``
+    The same ground, table and lighting, but without stationary tabletop
+    objects. The three animated compound objects are created separately by
+    :mod:`moving_objects`.
+
+SimulationApp must be created before importing this module.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Literal
 
 from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 
 
+SceneMode = Literal["static", "dynamic"]
+SCENE_MODES: tuple[str, str] = ("static", "dynamic")
+
+
 @dataclass(frozen=True)
 class SceneConfig:
-    """桌面场景几何参数，单位均为米。"""
+    """Tabletop geometry parameters in metres."""
 
     table_top_center_z: float = 0.75
     table_top_size_x: float = 1.60
     table_top_size_y: float = 1.15
     table_top_thickness: float = 0.08
     ground_size: float = 5.0
+
+    @property
+    def table_surface_z(self) -> float:
+        return self.table_top_center_z + 0.5 * self.table_top_thickness
+
+
+@dataclass(frozen=True)
+class SceneBuildResult:
+    """Information needed by the runtime after scene construction."""
+
+    mode: SceneMode
+    table_surface_z: float
+    object_paths: Dict[str, str]
 
 
 DEFAULT_SCENE_CONFIG = SceneConfig()
@@ -55,17 +81,21 @@ def _create_material(
     material = UsdShade.Material.Define(stage, path)
     shader = UsdShade.Shader.Define(stage, f"{path}/Shader")
     shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-        Gf.Vec3f(*color)
-    )
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(
-        float(roughness)
-    )
-    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(
-        float(metallic)
-    )
+    shader.CreateInput(
+        "diffuseColor",
+        Sdf.ValueTypeNames.Color3f,
+    ).Set(Gf.Vec3f(*color))
+    shader.CreateInput(
+        "roughness",
+        Sdf.ValueTypeNames.Float,
+    ).Set(float(roughness))
+    shader.CreateInput(
+        "metallic",
+        Sdf.ValueTypeNames.Float,
+    ).Set(float(metallic))
     material.CreateSurfaceOutput().ConnectToSource(
-        shader.ConnectableAPI(), "surface"
+        shader.ConnectableAPI(),
+        "surface",
     )
     return material
 
@@ -84,7 +114,12 @@ def _create_cube(
 ) -> None:
     cube = UsdGeom.Cube.Define(stage, path)
     cube.CreateSizeAttr(1.0)
-    _set_xform(cube.GetPrim(), center, size_xyz, rotation_xyz_deg)
+    _set_xform(
+        cube.GetPrim(),
+        center,
+        size_xyz,
+        rotation_xyz_deg,
+    )
     _bind_material(cube.GetPrim(), material)
 
 
@@ -104,8 +139,7 @@ def _create_cylinder(
     _set_xform(
         cylinder.GetPrim(),
         center,
-        (1.0, 1.0, 1.0),
-        rotation_xyz_deg,
+        rotation_xyz_deg=rotation_xyz_deg,
     )
     _bind_material(cylinder.GetPrim(), material)
 
@@ -124,46 +158,49 @@ def _create_sphere(
     _bind_material(sphere.GetPrim(), material)
 
 
-def build_scene(
-    stage,
-    config: SceneConfig = DEFAULT_SCENE_CONFIG,
-) -> Dict[str, str]:
-    """创建场景并返回逻辑对象名到 USD prim 路径的映射。"""
-
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    for path in (
-        "/World",
-        "/World/Table",
-        "/World/Objects",
-        "/World/Cameras",
-        "/World/Lights",
-        "/World/Materials",
-    ):
-        _define_xform(stage, path)
-
-    materials = {
+def _create_materials(stage) -> dict[str, UsdShade.Material]:
+    return {
         "ground": _create_material(
-            stage, "/World/Materials/Ground", (0.18, 0.20, 0.23), 0.85
+            stage,
+            "/World/Materials/Ground",
+            (0.18, 0.20, 0.23),
+            0.85,
         ),
         "wood": _create_material(
-            stage, "/World/Materials/Wood", (0.42, 0.20, 0.07), 0.58
+            stage,
+            "/World/Materials/Wood",
+            (0.42, 0.20, 0.07),
+            0.58,
         ),
         "red": _create_material(
-            stage, "/World/Materials/Red", (0.72, 0.04, 0.03), 0.35
+            stage,
+            "/World/Materials/Red",
+            (0.72, 0.04, 0.03),
+            0.35,
         ),
         "green": _create_material(
-            stage, "/World/Materials/Green", (0.04, 0.50, 0.10), 0.32
+            stage,
+            "/World/Materials/Green",
+            (0.04, 0.50, 0.10),
+            0.32,
         ),
         "blue": _create_material(
-            stage, "/World/Materials/Blue", (0.04, 0.16, 0.72), 0.30
+            stage,
+            "/World/Materials/Blue",
+            (0.04, 0.16, 0.72),
+            0.30,
         ),
         "yellow": _create_material(
-            stage, "/World/Materials/Yellow", (0.90, 0.55, 0.03), 0.38
+            stage,
+            "/World/Materials/Yellow",
+            (0.90, 0.55, 0.03),
+            0.38,
         ),
         "white": _create_material(
-            stage, "/World/Materials/White", (0.82, 0.84, 0.88), 0.42
+            stage,
+            "/World/Materials/White",
+            (0.82, 0.84, 0.88),
+            0.42,
         ),
         "metal": _create_material(
             stage,
@@ -173,10 +210,19 @@ def build_scene(
             metallic=0.75,
         ),
         "dark": _create_material(
-            stage, "/World/Materials/Dark", (0.06, 0.07, 0.08), 0.55
+            stage,
+            "/World/Materials/Dark",
+            (0.06, 0.07, 0.08),
+            0.55,
         ),
     }
 
+
+def _build_ground_and_table(
+    stage,
+    config: SceneConfig,
+    materials: dict[str, UsdShade.Material],
+) -> None:
     _create_cube(
         stage,
         "/World/Ground",
@@ -184,7 +230,6 @@ def build_scene(
         (config.ground_size, config.ground_size, 0.05),
         materials["ground"],
     )
-
     _create_cube(
         stage,
         "/World/Table/Top",
@@ -198,13 +243,19 @@ def build_scene(
     )
 
     leg_height = (
-        config.table_top_center_z - config.table_top_thickness * 0.5
+        config.table_top_center_z
+        - 0.5 * config.table_top_thickness
     )
-    leg_z = leg_height * 0.5
-    leg_x = config.table_top_size_x * 0.5 - 0.10
-    leg_y = config.table_top_size_y * 0.5 - 0.10
+    leg_z = 0.5 * leg_height
+    leg_x = 0.5 * config.table_top_size_x - 0.10
+    leg_y = 0.5 * config.table_top_size_y - 0.10
     for index, (x, y) in enumerate(
-        ((-leg_x, -leg_y), (leg_x, -leg_y), (-leg_x, leg_y), (leg_x, leg_y))
+        (
+            (-leg_x, -leg_y),
+            (leg_x, -leg_y),
+            (-leg_x, leg_y),
+            (leg_x, leg_y),
+        )
     ):
         _create_cube(
             stage,
@@ -214,11 +265,14 @@ def build_scene(
             materials["wood"],
         )
 
-    surface_z = (
-        config.table_top_center_z + config.table_top_thickness * 0.5
-    )
 
-    # 麦片盒。
+def _build_static_objects(
+    stage,
+    surface_z: float,
+    materials: dict[str, UsdShade.Material],
+) -> Dict[str, str]:
+    """Restore the original stationary tabletop arrangement."""
+
     _create_cube(
         stage,
         "/World/Objects/CerealBox",
@@ -227,8 +281,6 @@ def build_scene(
         materials["yellow"],
         (0.0, 0.0, -12.0),
     )
-
-    # 罐头。
     _create_cylinder(
         stage,
         "/World/Objects/FoodCan",
@@ -238,7 +290,6 @@ def build_scene(
         materials["metal"],
     )
 
-    # 瓶子。
     _define_xform(stage, "/World/Objects/Bottle")
     _create_cylinder(
         stage,
@@ -273,7 +324,6 @@ def build_scene(
         materials["dark"],
     )
 
-    # 杯子与把手。
     _define_xform(stage, "/World/Objects/Mug")
     _create_cylinder(
         stage,
@@ -305,7 +355,6 @@ def build_scene(
         materials["blue"],
     )
 
-    # 苹果。
     _create_sphere(
         stage,
         "/World/Objects/Apple",
@@ -324,7 +373,6 @@ def build_scene(
         (8.0, 0.0, 0.0),
     )
 
-    # 碗的几何代理。
     _define_xform(stage, "/World/Objects/Bowl")
     _create_cylinder(
         stage,
@@ -343,6 +391,17 @@ def build_scene(
         materials["dark"],
     )
 
+    return {
+        "cereal_box": "/World/Objects/CerealBox",
+        "food_can": "/World/Objects/FoodCan",
+        "bottle": "/World/Objects/Bottle",
+        "mug": "/World/Objects/Mug",
+        "apple": "/World/Objects/Apple",
+        "bowl": "/World/Objects/Bowl",
+    }
+
+
+def _build_lighting(stage) -> None:
     dome = UsdLux.DomeLight.Define(stage, "/World/Lights/Dome")
     dome.CreateIntensityAttr(500.0)
     dome.CreateColorAttr(Gf.Vec3f(0.95, 0.97, 1.0))
@@ -362,12 +421,52 @@ def build_scene(
     fill.CreateColorAttr(Gf.Vec3f(1.0, 0.80, 0.68))
     _set_xform(fill.GetPrim(), (-1.4, -1.0, 2.3))
 
-    return {
+
+def build_scene(
+    stage,
+    scene_mode: SceneMode = "static",
+    config: SceneConfig = DEFAULT_SCENE_CONFIG,
+) -> SceneBuildResult:
+    """Build exactly one scene mode and return its runtime metadata."""
+
+    if scene_mode not in SCENE_MODES:
+        raise ValueError(
+            f"Unknown scene mode {scene_mode!r}; expected one of "
+            f"{SCENE_MODES}."
+        )
+
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    for path in (
+        "/World",
+        "/World/Table",
+        "/World/Objects",
+        "/World/Cameras",
+        "/World/Lights",
+        "/World/Materials",
+    ):
+        _define_xform(stage, path)
+
+    materials = _create_materials(stage)
+    _build_ground_and_table(stage, config, materials)
+
+    object_paths: Dict[str, str] = {
         "table": "/World/Table",
-        "cereal_box": "/World/Objects/CerealBox",
-        "food_can": "/World/Objects/FoodCan",
-        "bottle": "/World/Objects/Bottle",
-        "mug": "/World/Objects/Mug",
-        "apple": "/World/Objects/Apple",
-        "bowl": "/World/Objects/Bowl",
     }
+    if scene_mode == "static":
+        object_paths.update(
+            _build_static_objects(
+                stage,
+                config.table_surface_z,
+                materials,
+            )
+        )
+
+    _build_lighting(stage)
+
+    return SceneBuildResult(
+        mode=scene_mode,
+        table_surface_z=config.table_surface_z,
+        object_paths=object_paths,
+    )

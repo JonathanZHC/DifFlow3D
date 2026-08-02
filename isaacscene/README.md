@@ -1,84 +1,61 @@
-# isaacscene
+# isaacscene: static and dynamic scene modes
 
-四个主模块：
+The scene code now has exactly two mutually exclusive configurations selected
+by one command-line flag.
 
-- `scene_settings.py`：桌面和日常物体。
-- `camera_settings.py`：两台相机、标定、RGB-D、点云和可选 corruption。
-- `ros_camera_publisher.py`：ROS 2 Image、CameraInfo、PointCloud2、Pose、TF。
-- `run_isaacsim.py`：启动 Isaac Sim 并组合前三个模块。
+## Scene selection
 
-默认话题：
-
-- `/camera_0/color/image_raw`
-- `/camera_0/depth/image_raw`
-- `/camera_0/camera_info`
-- `/camera_0/points`
-- `/camera_0/pose`
-- `/camera_1/color/image_raw`
-- `/camera_1/depth/image_raw`
-- `/camera_1/camera_info`
-- `/camera_1/points`
-- `/camera_1/pose`
-- `/cameras/fused_points`
-
-静态 TF：
-
-- `world -> camera_0_optical_frame`
-- `world -> camera_1_optical_frame`
-
-
-## RViz 可视化
-
-主点云 `/cameras/fused_points` 自动表示当前主数据：
-启用 `--corrupt` 时为损坏数据，否则为干净数据。
-
-三维相机可视化：
-- `/cameras/visualization`
-- 相机机身、坐标轴、光轴、视锥体；
-- 视锥底面使用当前 RGB 图像作为动态纹理。
-
-启动：
-```bash
-rviz2 -d /workspace/isaacscene/isaacscene.rviz
-```
-
-推荐为避免增加仿真负载，将纹理平面设为 2 Hz：
-```bash
---visualization-hz 2
-```
-
-
-## Isaac Sim 内部可视化
-
-GUI 模式默认显示：
-
-- `/World/Visualizations/PrimaryFusedPointCloud`
-- `/World/Visualizations/Cameras/camera_0`
-- `/World/Visualizations/Cameras/camera_1`
-- 两个当前主 RGB 流的 Isaac UI 图像窗口
-
-主数据选择：
-
-- 使用 `--corrupt`：显示损坏点云与损坏 RGB；
-- 不使用 `--corrupt`：显示干净点云与干净 RGB。
-
-推荐参数：
+### Original static scene
 
 ```bash
---isaac-visualization-hz 5 \
---isaac-max-points 40000 \
---isaac-point-size 0.008 \
---isaac-frustum-depth 0.45
+/isaac-sim/python.sh /workspace/isaacscene/run_isaacsim.py \
+  --scene static \
+  --width 640 \
+  --height 480 \
+  --rgbd-hz 30 \
+  --pointcloud-hz 2
 ```
 
-关闭全部 Isaac 内部可视化：
+This restores the original stationary tabletop objects:
+
+- cereal box;
+- food can;
+- ordinary bottle;
+- mug;
+- apple;
+- bowl.
+
+`static` is the default, so omitting `--scene` gives the same result.
+
+### Dynamic scene
 
 ```bash
---no-isaac-visualization
+/isaac-sim/python.sh /workspace/isaacscene/run_isaacsim.py \
+  --scene dynamic \
+  --width 640 \
+  --height 480 \
+  --rgbd-hz 30 \
+  --pointcloud-hz 2 \
+  --motion-speed-scale 1.0
 ```
 
-只关闭相机图像窗口、保留三维点云和视锥：
+The dynamic tabletop contains:
 
-```bash
---no-isaac-camera-windows
-```
+- a tall moving shelf/cart;
+- a compound moving bottle;
+- a floating drone-like object.
+
+The original stationary tabletop objects are not created in dynamic mode, so
+there is no mixed or duplicated scene.
+
+## Code ownership
+
+- `scene_settings.py`: scene-mode flag definitions, common ground/table/lights,
+  and the original static objects.
+- `moving_objects.py`: all dynamic geometry and motion trajectories.
+- `run_isaacsim.py`: selects one mode with `--scene static|dynamic` and updates
+  the motion controller only in dynamic mode.
+
+The stale duplicate `dynamic_objects.py` has been removed.
+
+The camera, corruption, ROS publication and GPU point-cloud code are unchanged.

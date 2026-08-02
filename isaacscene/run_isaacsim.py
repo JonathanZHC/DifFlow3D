@@ -1,375 +1,405 @@
 #!/usr/bin/env python3
-"""启动 Isaac Sim，组合场景、相机和 ROS 发布器。"""
+"""Run the two-camera Isaac Sim RGB-D and point-cloud publisher."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import sys
 import time
 import traceback
-from pathlib import Path
+
+
+WARMUP_FRAMES = 20
+ROS_DOMAIN_ID = 117
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--renderer", default="RaytracedLighting")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--camera-hz", type=float, default=30.0)
-    parser.add_argument("--warmup-frames", type=int, default=40)
-
-    # 0 表示一直运行到关闭 GUI 或 Ctrl+C。
-    parser.add_argument("--frames", type=int, default=0)
-
-    parser.add_argument("--point-stride", type=int, default=1)
-    parser.add_argument("--max-depth", type=float, default=5.0)
-
-    parser.add_argument("--corrupt", action="store_true")
-    parser.add_argument(
-        "--publish-clean",
-        action="store_true",
-        help="在 corrupt 流之外同时发布 clean 话题",
-    )
-    parser.add_argument("--seed", type=int, default=7)
-
-    parser.add_argument("--no-ros", action="store_true")
-    parser.add_argument("--ros-domain-id", type=int, default=100)
-
-    parser.add_argument(
-        "--no-visualization",
-        action="store_true",
-        help="不发布 RViz 相机视锥和纹理图像平面",
+    parser = argparse.ArgumentParser(
+        description=(
+            "Publish two independent RGB-D camera streams and "
+            "full per-camera point clouds forever."
+        )
     )
     parser.add_argument(
-        "--visualization-hz",
+        "--width",
+        type=int,
+        default=640,
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=480,
+    )
+    parser.add_argument(
+        "--rgbd-hz",
+        "--camera-hz",
+        dest="rgbd_hz",
+        type=float,
+        default=30.0,
+        help=(
+            "RGB, 32FC1 depth, CameraInfo and pose publication rate. "
+            "The legacy --camera-hz name is kept as an alias."
+        ),
+    )
+    parser.add_argument(
+        "--pointcloud-hz",
         type=float,
         default=2.0,
-        help="三维相机纹理平面更新频率；点云仍按 camera-hz 发布",
+        help=(
+            "Full per-camera PointCloud2 publication rate."
+        ),
     )
     parser.add_argument(
-        "--frustum-depth",
-        type=float,
-        default=0.45,
-        help="RViz 相机视锥图像平面距离，单位米",
-    )
-    parser.add_argument(
-        "--texture-jpeg-quality",
-        type=int,
-        default=75,
-        help="RViz 三维图像纹理 JPEG 质量 [1,100]",
-    )
-
-    parser.add_argument(
-        "--no-isaac-visualization",
+        "--headless",
         action="store_true",
-        help="关闭 Isaac Sim 主视口点云、相机视锥和图像窗口",
+        help="Run Isaac Sim without a GUI viewport.",
     )
     parser.add_argument(
-        "--isaac-visualization-hz",
-        type=float,
-        default=5.0,
-        help="Isaac Sim 内点云和图像窗口更新频率",
-    )
-    parser.add_argument(
-        "--isaac-max-points",
-        type=int,
-        default=40000,
-        help="Isaac Sim 主视口最多显示的融合点数",
-    )
-    parser.add_argument(
-        "--isaac-point-size",
-        type=float,
-        default=0.008,
-        help="Isaac Sim 点云显示点直径，单位米",
-    )
-    parser.add_argument(
-        "--isaac-frustum-depth",
-        type=float,
-        default=0.45,
-        help="Isaac Sim 相机视锥长度，单位米",
-    )
-    parser.add_argument(
-        "--no-isaac-camera-windows",
+        "--corrupt",
         action="store_true",
-        help="保留三维点云/视锥，但不创建相机 RGB 窗口",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("/workspace/camera_output/isaacscene"),
+        help="Enable NVIDIA Warp GPU camera corruption.",
     )
     parser.add_argument(
-        "--save-every",
+        "--no-rgb-corruption",
+        dest="rgb_corruption",
+        action="store_false",
+        default=True,
+        help=(
+            "Keep RGB clean when --corrupt is enabled. "
+            "RGB corruption is enabled by default."
+        ),
+    )
+    parser.add_argument(
+        "--no-depth-corruption",
+        dest="depth_corruption",
+        action="store_false",
+        default=True,
+        help=(
+            "Keep depth and point clouds clean when --corrupt is enabled. "
+            "Depth corruption is enabled by default."
+        ),
+    )
+    parser.add_argument(
+        "--scene",
+        "--scene-mode",
+        dest="scene_mode",
+        choices=("static", "dynamic"),
+        default="static",
+        help=(
+            "Select the complete scene configuration: "
+            "'static' restores the original stationary tabletop; "
+            "'dynamic' uses the tall shelf, bottle and floating object. "
+            "Default: static."
+        ),
+    )
+    parser.add_argument(
+        "--motion-speed-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiply all moving-object trajectory speeds. "
+            "Default: 1.0."
+        ),
+    )
+    parser.add_argument(
+        "--profile-every",
         type=int,
-        default=0,
-        help="每 N 个发布帧保存一次，0 表示不保存帧",
+        default=60,
+        help="Print timing statistics every N RGB-D frames.",
     )
-
     return parser.parse_args()
 
 
 ARGS = parse_args()
 
 if ARGS.width <= 0 or ARGS.height <= 0:
-    raise ValueError("width 和 height 必须大于 0")
-if ARGS.camera_hz <= 0.0:
-    raise ValueError("camera-hz 必须大于 0")
-if ARGS.frames < 0:
-    raise ValueError("frames 不得为负数")
-if ARGS.point_stride <= 0:
-    raise ValueError("point-stride 必须大于 0")
-if ARGS.max_depth <= 0.0:
-    raise ValueError("max-depth 必须大于 0")
-if ARGS.save_every < 0:
-    raise ValueError("save-every 不得为负数")
-if ARGS.visualization_hz <= 0.0:
-    raise ValueError("visualization-hz 必须大于 0")
-if ARGS.frustum_depth <= 0.0:
-    raise ValueError("frustum-depth 必须大于 0")
-if not 1 <= ARGS.texture_jpeg_quality <= 100:
-    raise ValueError("texture-jpeg-quality 必须在 [1,100]")
-if ARGS.isaac_visualization_hz <= 0.0:
-    raise ValueError("isaac-visualization-hz 必须大于 0")
-if ARGS.isaac_max_points <= 0:
-    raise ValueError("isaac-max-points 必须大于 0")
-if ARGS.isaac_point_size <= 0.0:
-    raise ValueError("isaac-point-size 必须大于 0")
-if ARGS.isaac_frustum_depth <= 0.0:
-    raise ValueError("isaac-frustum-depth 必须大于 0")
+    raise ValueError("Width and height must be positive.")
+if ARGS.rgbd_hz <= 0.0:
+    raise ValueError("rgbd-hz must be positive.")
+if ARGS.pointcloud_hz <= 0.0:
+    raise ValueError("pointcloud-hz must be positive.")
+if ARGS.pointcloud_hz > ARGS.rgbd_hz:
+    raise ValueError(
+        "pointcloud-hz cannot exceed rgbd-hz."
+    )
+if ARGS.motion_speed_scale <= 0.0:
+    raise ValueError("motion-speed-scale must be positive.")
+if ARGS.profile_every <= 0:
+    raise ValueError("profile-every must be positive.")
+if (
+    ARGS.corrupt
+    and not ARGS.rgb_corruption
+    and not ARGS.depth_corruption
+):
+    raise ValueError(
+        "--corrupt cannot be combined with both "
+        "--no-rgb-corruption and --no-depth-corruption."
+    )
 
-os.environ["ROS_DOMAIN_ID"] = str(ARGS.ros_domain_id)
-os.environ.setdefault("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+os.environ["ROS_DOMAIN_ID"] = str(ROS_DOMAIN_ID)
+os.environ.setdefault(
+    "RMW_IMPLEMENTATION",
+    "rmw_fastrtps_cpp",
+)
 
-# 必须先创建 SimulationApp，再导入 omni/pxr/Replicator 模块。
+# SimulationApp must be created before importing omni, pxr or Replicator.
 from isaacsim import SimulationApp
 
 simulation_app = SimulationApp(
     {
         "headless": ARGS.headless,
-        "renderer": ARGS.renderer,
+        "renderer": "RaytracedLighting",
         "width": ARGS.width,
         "height": ARGS.height,
     }
 )
 
-
 import numpy as np
 import omni.timeline
 import omni.usd
 
+from camera_pyramid_visualizer import CameraPyramidVisualizer
 from camera_settings import (
     CameraRigConfig,
     CorruptionConfig,
     capture_all_cameras,
     create_cameras,
-    fuse_world_pointcloud,
-    save_calibration,
-    save_frame_bundle,
 )
-from scene_settings import build_scene
+from moving_objects import MovingObjectController
+from ros_camera_publisher import RosCameraPublisher
+from scene_settings import (
+    DEFAULT_SCENE_CONFIG,
+    build_scene,
+)
+
+
+def _print_profile(
+    samples: list[dict[str, float]],
+) -> None:
+    print("[PROFILE]", flush=True)
+    for key in (
+        "capture_ms",
+        "ros_ms",
+        "pointcloud_ms",
+        "pipeline_ms",
+        "actual_period_ms",
+    ):
+        values = np.asarray(
+            [sample[key] for sample in samples],
+            dtype=np.float64,
+        )
+        if key == "actual_period_ms":
+            values = values[values > 0.0]
+        if values.size == 0:
+            continue
+
+        print(
+            f"  {key:<18}"
+            f" mean={values.mean():8.3f}"
+            f" p95={np.percentile(values, 95):8.3f}"
+            f" max={values.max():8.3f}",
+            flush=True,
+        )
+
+    period_values = np.asarray(
+        [
+            sample["actual_period_ms"]
+            for sample in samples
+            if sample["actual_period_ms"] > 0.0
+        ],
+        dtype=np.float64,
+    )
+    if period_values.size:
+        print(
+            f"  achieved_hz       "
+            f"{1000.0 / period_values.mean():8.3f}",
+            flush=True,
+        )
 
 
 def main() -> None:
     ros_publisher = None
-    isaac_visualizer = None
+    pyramid_visualizer = None
+    moving_object_controller = None
 
-    stage = omni.usd.get_context().get_stage()
-    object_paths = build_scene(stage)
-
-    rig = CameraRigConfig(
-        width=ARGS.width,
-        height=ARGS.height,
-        max_depth_m=ARGS.max_depth,
-        point_stride=ARGS.point_stride,
-    )
-    corruption = CorruptionConfig(
-        enabled=ARGS.corrupt,
-        seed=ARGS.seed,
-    )
-    rng = np.random.default_rng(corruption.seed)
-
-    cameras = create_cameras(stage, rig)
-
-    if (
-        not ARGS.headless
-        and not ARGS.no_isaac_visualization
-    ):
-        from isaacsim_visualizer import IsaacSimVisualizer
-
-        isaac_visualizer = IsaacSimVisualizer(
-            stage=stage,
-            cameras=cameras,
-            image_width=rig.width,
-            image_height=rig.height,
-            primary_stream_label=(
-                "corrupted" if ARGS.corrupt else "clean"
-            ),
-            update_hz=ARGS.isaac_visualization_hz,
-            max_points=ARGS.isaac_max_points,
-            point_size_m=ARGS.isaac_point_size,
-            frustum_depth_m=ARGS.isaac_frustum_depth,
-            show_image_windows=(
-                not ARGS.no_isaac_camera_windows
-            ),
+    try:
+        stage = omni.usd.get_context().get_stage()
+        scene = build_scene(
+            stage,
+            scene_mode=ARGS.scene_mode,
         )
 
-    ARGS.output_dir.mkdir(parents=True, exist_ok=True)
-    save_calibration(ARGS.output_dir, cameras, rig)
-    stage.GetRootLayer().Export(
-        str(ARGS.output_dir / "tabletop_scene.usda")
-    )
+        if ARGS.scene_mode == "dynamic":
+            moving_object_controller = MovingObjectController(
+                stage,
+                table_surface_z=scene.table_surface_z,
+                speed_scale=ARGS.motion_speed_scale,
+            )
 
-    print("\n场景对象：", flush=True)
-    for name, path in object_paths.items():
-        print(f"  {name}: {path}", flush=True)
+        rig = CameraRigConfig(
+            width=ARGS.width,
+            height=ARGS.height,
+        )
+        corruption = CorruptionConfig(
+            enabled=ARGS.corrupt,
+            corrupt_rgb=ARGS.rgb_corruption,
+            corrupt_depth=ARGS.depth_corruption,
+        )
+        corruption.validate()
 
-    print("\n相机标定：", flush=True)
-    for camera in cameras:
+        cameras = create_cameras(
+            stage,
+            rig,
+            corruption,
+        )
+
+        if not ARGS.headless:
+            pyramid_visualizer = CameraPyramidVisualizer(
+                cameras,
+                ARGS.width,
+                ARGS.height,
+            )
+
+        ros_publisher = RosCameraPublisher(
+            cameras,
+            rgbd_hz=ARGS.rgbd_hz,
+            pointcloud_hz=ARGS.pointcloud_hz,
+            max_depth_m=rig.max_depth_m,
+            world_frame_id=rig.world_frame_id,
+        )
+
+        timeline = omni.timeline.get_timeline_interface()
+        timeline.play()
+
         print(
-            f"\n{camera.spec.name}"
-            f"\n  prim={camera.spec.prim_path}"
-            f"\n  optical_frame={camera.spec.optical_frame_id}"
-            f"\n  K=\n{camera.K}"
-            f"\n  T_world_from_camera_optical="
-            f"\n{camera.T_world_from_camera_optical}",
+            f"Warming up the renderer for {WARMUP_FRAMES} frames.",
+            flush=True,
+        )
+        for _ in range(WARMUP_FRAMES):
+            simulation_app.update()
+
+        stream = "corrupted" if ARGS.corrupt else "clean"
+        print(
+            "Running forever: "
+            f"resolution={ARGS.width}x{ARGS.height}, "
+            f"rgbd_hz={ARGS.rgbd_hz}, "
+            f"pointcloud_hz={ARGS.pointcloud_hz}, "
+            f"headless={ARGS.headless}, "
+            f"scene={ARGS.scene_mode}, "
+            f"motion_speed_scale={ARGS.motion_speed_scale}, "
+            f"stream={stream}, "
+            f"rgb_corruption="
+            f"{ARGS.corrupt and ARGS.rgb_corruption}, "
+            f"depth_corruption="
+            f"{ARGS.corrupt and ARGS.depth_corruption}, "
+            "depth_encoding=32FC1, "
+            "pointcloud=separate_full_optical_frame, "
+            "downsampling=false, fusion=false",
             flush=True,
         )
 
-    if not ARGS.no_ros:
-        from ros_camera_publisher import RosCameraPublisher
+        publish_period = 1.0 / ARGS.rgbd_hz
+        motion_start_time = time.perf_counter()
+        next_publish_time = motion_start_time
+        published_frames = 0
+        last_publish_time = None
+        profile_samples: list[dict[str, float]] = []
+        log_every_frames = max(1, int(round(ARGS.rgbd_hz)))
 
-        ros_publisher = RosCameraPublisher(
-            cameras=cameras,
-            world_frame_id=rig.world_frame_id,
-            publish_clean=ARGS.publish_clean,
-            enable_visualization=not ARGS.no_visualization,
-            visualization_hz=ARGS.visualization_hz,
-            frustum_depth_m=ARGS.frustum_depth,
-            texture_jpeg_quality=ARGS.texture_jpeg_quality,
-            primary_stream_label=(
-                "corrupted" if ARGS.corrupt else "clean"
-            ),
-        )
+        while simulation_app.is_running():
+            if moving_object_controller is not None:
+                motion_now = time.perf_counter()
+                moving_object_controller.update(
+                    motion_now - motion_start_time
+                )
 
-    timeline = omni.timeline.get_timeline_interface()
-    timeline.play()
+            # Render after updating USD transforms so the captured RGB-D frame
+            # contains the current moving-object positions.
+            simulation_app.update()
 
-    print(
-        f"\n预热渲染器：{ARGS.warmup_frames} 帧",
-        flush=True,
-    )
-    for _ in range(ARGS.warmup_frames):
-        simulation_app.update()
+            now = time.perf_counter()
+            if now < next_publish_time:
+                continue
 
-    publish_period = 1.0 / ARGS.camera_hz
-    next_publish_time = time.perf_counter()
-    published_frames = 0
-
-    print(
-        "\n开始运行："
-        f" headless={ARGS.headless},"
-        f" camera_hz={ARGS.camera_hz},"
-        f" corruption={ARGS.corrupt},"
-        f" ROS={not ARGS.no_ros},"
-        f" rviz_visualization={not ARGS.no_visualization},"
-        f" isaac_visualization="
-        f"{not ARGS.no_isaac_visualization}",
-        flush=True,
-    )
-
-    while simulation_app.is_running():
-        simulation_app.update()
-
-        now = time.perf_counter()
-        if now < next_publish_time:
-            # GUI 仍需持续 update，不在这里长时间 sleep。
-            continue
-
-        # 避免执行速度低于目标频率后持续追赶。
-        next_publish_time = max(
-            next_publish_time + publish_period,
-            now,
-        )
-
-        frames = capture_all_cameras(
-            cameras,
-            rig,
-            corruption,
-            rng,
-        )
-        fused_points, fused_colors = fuse_world_pointcloud(
-            frames,
-            clean=False,
-        )
-
-        clean_fused_points = None
-        clean_fused_colors = None
-        if ARGS.publish_clean:
-            clean_fused_points, clean_fused_colors = (
-                fuse_world_pointcloud(frames, clean=True)
+            next_publish_time = max(
+                next_publish_time + publish_period,
+                now,
             )
 
-        if ros_publisher is not None:
-            ros_publisher.publish(
-                frames,
-                fused_points,
-                fused_colors,
-                clean_fused_points,
-                clean_fused_colors,
+            pipeline_start = time.perf_counter()
+            frames = capture_all_cameras(
+                cameras,
+                rig,
+                corruption,
+                frame_index=published_frames,
+            )
+            capture_end = time.perf_counter()
+
+            pointcloud_ms = ros_publisher.publish(frames)
+            ros_end = time.perf_counter()
+
+            if last_publish_time is None:
+                actual_period_ms = 0.0
+            else:
+                actual_period_ms = 1000.0 * (
+                    ros_end - last_publish_time
+                )
+            last_publish_time = ros_end
+
+            profile_samples.append(
+                {
+                    "capture_ms": 1000.0 * (
+                        capture_end - pipeline_start
+                    ),
+                    "ros_ms": 1000.0 * (
+                        ros_end - capture_end
+                    ),
+                    "pointcloud_ms": pointcloud_ms,
+                    "pipeline_ms": 1000.0 * (
+                        ros_end - pipeline_start
+                    ),
+                    "actual_period_ms": actual_period_ms,
+                }
             )
 
-        if isaac_visualizer is not None:
-            isaac_visualizer.update(
-                frames,
-                fused_points,
-                fused_colors,
-            )
+            published_frames += 1
 
-        if (
-            ARGS.save_every > 0
-            and published_frames % ARGS.save_every == 0
-        ):
-            saved_dir = save_frame_bundle(
-                ARGS.output_dir,
-                published_frames,
-                frames,
-            )
-            print(f"保存：{saved_dir}", flush=True)
+            if published_frames % log_every_frames == 0:
+                point_counts = ", ".join(
+                    f"{name}={count}"
+                    for name, count
+                    in ros_publisher.last_point_counts.items()
+                )
+                print(
+                    f"frame={published_frames:06d} "
+                    f"points[{point_counts}] "
+                    f"pointcloud_ms="
+                    f"{ros_publisher.last_pointcloud_ms:.3f}",
+                    flush=True,
+                )
 
-        if published_frames % 30 == 0:
-            camera_stats = ", ".join(
-                f"{name}={frame.points_world.shape[0]}"
-                for name, frame in frames.items()
-            )
-            print(
-                f"frame={published_frames:06d} "
-                f"points[{camera_stats}] "
-                f"fused={fused_points.shape[0]}",
-                flush=True,
-            )
+            if len(profile_samples) >= ARGS.profile_every:
+                _print_profile(profile_samples)
+                profile_samples.clear()
 
-        published_frames += 1
-        if ARGS.frames > 0 and published_frames >= ARGS.frames:
-            break
-
-    if isaac_visualizer is not None:
-        isaac_visualizer.shutdown()
-
-    if ros_publisher is not None:
-        ros_publisher.shutdown()
-
-
-if __name__ == "__main__":
-    try:
-        main()
     except KeyboardInterrupt:
-        print("\n收到 Ctrl+C，正在关闭。", flush=True)
+        print("Interrupted by the user.", flush=True)
     except Exception:
         traceback.print_exc()
         raise
     finally:
+        if ros_publisher is not None:
+            ros_publisher.shutdown()
+        if pyramid_visualizer is not None:
+            pyramid_visualizer.clear()
+
+        try:
+            omni.timeline.get_timeline_interface().stop()
+        except Exception:
+            pass
+
         simulation_app.close()
+
+
+if __name__ == "__main__":
+    main()

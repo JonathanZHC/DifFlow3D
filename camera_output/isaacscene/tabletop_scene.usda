@@ -173,6 +173,177 @@ def "Render" (
             uniform token sourceType = "raw"
         }
     }
+
+    over "PostProcess"
+    {
+        over "SDGPipeline"
+        {
+            custom int graph:variable:seedCount (
+                customData = {
+                    token scope = "private"
+                }
+                displayName = "seedCount"
+            )
+
+            over "camera_0_render_product_DepthCameraCorruptionWp_cd55d0368e7711f187b4d4a2cdae1bc2"
+            {
+                custom token inputs:augmentationFunctionName = "depth_camera_corruption_wp"
+                custom string inputs:augmentationScript = '''@wp.kernel
+def depth_camera_corruption_wp(
+    data_in: wp.array2d(dtype=wp.float32),
+    data_out: wp.array2d(dtype=wp.float32),
+    noise_base_m: float,
+    noise_quadratic: float,
+    quantization_m: float,
+    random_dropout_probability: float,
+    edge_dropout_probability: float,
+    edge_threshold_m: float,
+    seed: int,
+):
+    """Apply a fused RGB-D style depth corruption model in one GPU kernel.
+
+    The model contains distance-dependent Gaussian noise, quantization,
+    independent dropout and depth-discontinuity dropout.  Invalid output is NaN
+    so the existing point-cloud validity mask removes it.
+    """
+
+    row, col = wp.tid()
+    width = data_in.shape[1]
+    pixel_id = row * width + col
+    clean_depth = data_in[row, col]
+
+    valid = wp.isfinite(clean_depth) and clean_depth > 0.0
+    if not valid:
+        data_out[row, col] = wp.float32(wp.NAN)
+    else:
+        state = wp.rand_init(seed, pixel_id)
+
+        sigma = noise_base_m + noise_quadratic * clean_depth * clean_depth
+        noisy_depth = clean_depth + sigma * wp.randn(state)
+
+        if quantization_m > 0.0:
+            noisy_depth = (
+                wp.round(noisy_depth / quantization_m)
+                * quantization_m
+            )
+
+        random_dropout = (
+            wp.randf(state) < random_dropout_probability
+        )
+        edge = _is_depth_edge(
+            data_in,
+            row,
+            col,
+            clean_depth,
+            edge_threshold_m,
+        )
+        edge_dropout = (
+            edge
+            and wp.randf(state) < edge_dropout_probability
+        )
+
+        output_valid = (
+            wp.isfinite(noisy_depth)
+            and noisy_depth > 0.0
+            and not random_dropout
+            and not edge_dropout
+        )
+
+        if output_valid:
+            data_out[row, col] = noisy_depth
+        else:
+            data_out[row, col] = wp.float32(wp.NAN)
+'''
+                custom double inputs:edge_dropout_probability = 0.1
+                custom double inputs:edge_threshold_m = 0.025
+                custom int inputs:nodeId = 0
+                custom double inputs:noise_base_m = 0.0015
+                custom double inputs:noise_quadratic = 0.0015
+                custom double inputs:quantization_m = 0.001
+                custom double inputs:random_dropout_probability = 0.005
+                custom int inputs:seed = 36
+            }
+
+            over "camera_1_render_product_DepthCameraCorruptionWp_cd5a4f3a8e7711f187b4d4a2cdae1bc2"
+            {
+                custom token inputs:augmentationFunctionName = "depth_camera_corruption_wp"
+                custom string inputs:augmentationScript = '''@wp.kernel
+def depth_camera_corruption_wp(
+    data_in: wp.array2d(dtype=wp.float32),
+    data_out: wp.array2d(dtype=wp.float32),
+    noise_base_m: float,
+    noise_quadratic: float,
+    quantization_m: float,
+    random_dropout_probability: float,
+    edge_dropout_probability: float,
+    edge_threshold_m: float,
+    seed: int,
+):
+    """Apply a fused RGB-D style depth corruption model in one GPU kernel.
+
+    The model contains distance-dependent Gaussian noise, quantization,
+    independent dropout and depth-discontinuity dropout.  Invalid output is NaN
+    so the existing point-cloud validity mask removes it.
+    """
+
+    row, col = wp.tid()
+    width = data_in.shape[1]
+    pixel_id = row * width + col
+    clean_depth = data_in[row, col]
+
+    valid = wp.isfinite(clean_depth) and clean_depth > 0.0
+    if not valid:
+        data_out[row, col] = wp.float32(wp.NAN)
+    else:
+        state = wp.rand_init(seed, pixel_id)
+
+        sigma = noise_base_m + noise_quadratic * clean_depth * clean_depth
+        noisy_depth = clean_depth + sigma * wp.randn(state)
+
+        if quantization_m > 0.0:
+            noisy_depth = (
+                wp.round(noisy_depth / quantization_m)
+                * quantization_m
+            )
+
+        random_dropout = (
+            wp.randf(state) < random_dropout_probability
+        )
+        edge = _is_depth_edge(
+            data_in,
+            row,
+            col,
+            clean_depth,
+            edge_threshold_m,
+        )
+        edge_dropout = (
+            edge
+            and wp.randf(state) < edge_dropout_probability
+        )
+
+        output_valid = (
+            wp.isfinite(noisy_depth)
+            and noisy_depth > 0.0
+            and not random_dropout
+            and not edge_dropout
+        )
+
+        if output_valid:
+            data_out[row, col] = noisy_depth
+        else:
+            data_out[row, col] = wp.float32(wp.NAN)
+'''
+                custom double inputs:edge_dropout_probability = 0.1
+                custom double inputs:edge_threshold_m = 0.025
+                custom int inputs:nodeId = 1
+                custom double inputs:noise_base_m = 0.0015
+                custom double inputs:noise_quadratic = 0.0015
+                custom double inputs:quantization_m = 0.001
+                custom double inputs:random_dropout_probability = 0.005
+                custom int inputs:seed = 100039
+            }
+        }
+    }
 }
 
 over "OmniverseKit_Persp"
@@ -632,6 +803,24 @@ def Xform "World"
         float3 xformOp:scale = (5, 5, 0.05)
         double3 xformOp:translate = (0, 0, -0.025)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+
+def Scope "Replicator"
+{
+    def OmniGraph "SDGPipeline"
+    {
+        token evaluationMode = "Automatic"
+        token evaluator:type = "execution"
+        token fabricCacheBacking = "StageWithoutHistory"
+        int2 fileFormatVersion = (1, 9)
+        custom int64 graph:variable:globalSeed (
+            customData = {
+                token scope = "private"
+            }
+            displayName = "globalSeed"
+        )
+        token pipelineStage = "pipelineStageSimulation"
     }
 }
 

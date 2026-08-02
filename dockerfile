@@ -9,7 +9,9 @@
 #   - uses the official Isaac Sim 6.0.1 runtime;
 #   - compiles the legacy DifFlow3D PointNet++ CUDA extension for Python 3.12,
 #     PyTorch 2.11, CUDA 12.8 and Blackwell sm_120;
-#   - installs ROS 2 Jazzy;
+#   - installs ROS 2 Jazzy and RViz2;
+#   - installs NVIDIA Warp for GPU camera corruption;
+#   - installs Ultralytics YOLO with headless OpenCV;
 #   - keeps third-party Python packages isolated from Isaac Sim's bundled
 #     Python environment;
 #   - prepares persistent cache mount points for GUI/headless operation.
@@ -17,6 +19,9 @@
 ARG ISAAC_SIM_IMAGE=nvcr.io/nvidia/isaac-sim:6.0.1
 ARG CUDA_BUILDER_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 ARG TORCH_VERSION=2.11.0
+ARG TORCHVISION_VERSION=0.26.0
+ARG WARP_VERSION=1.15.0
+ARG ULTRALYTICS_VERSION=8.4.115
 ARG DIFFLOW_REPO_URL=https://github.com/IRMVLab/DifFlow3D.git
 ARG DIFFLOW_REPO_REF=main
 ARG TORCH_CUDA_ARCH_LIST=12.0
@@ -213,6 +218,9 @@ USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG WARP_VERSION
+ARG ULTRALYTICS_VERSION
 ARG TORCH_CUDA_ARCH_LIST
 
 # Do NOT set PYTHONPATH here. Isaac Sim's python.sh prepares its own bundled
@@ -229,14 +237,17 @@ ENV LANG=en_US.UTF-8 \
     ISAAC_SIM_PATH=/isaac-sim \
     DIFFLOW_REPO=/opt/DifFlow3D \
     ROS_DISTRO=jazzy \
-    ROS_DOMAIN_ID=100 \
+    ROS_DOMAIN_ID=117 \
     RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
     ACCEPT_EULA=Y \
     PRIVACY_CONSENT=Y \
     OMNICLIENT_HUB_MODE=disabled \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=all \
-    HOME=/isaac-sim
+    HOME=/isaac-sim \
+    YOLO_CONFIG_DIR=/isaac-sim/.config/Ultralytics \
+    MPLCONFIGDIR=/isaac-sim/.cache/matplotlib \
+    PATH=/opt/difflow-python-packages/bin:${PATH}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -261,6 +272,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxi6 \
       xauth \
       mesa-utils \
+      libgomp1 \
     && locale-gen en_US.UTF-8 \
     && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
       -o /usr/share/keyrings/ros-archive-keyring.gpg \
@@ -292,17 +304,26 @@ RUN mkdir -p /opt/difflow-python-packages \
       --no-cache-dir \
       --target /opt/difflow-python-packages \
       torch==${TORCH_VERSION} \
+      torchvision==${TORCHVISION_VERSION} \
       --index-url https://download.pytorch.org/whl/cu128
 
-# Install only the extra packages needed by the DifFlow3D scripts. Do not
-# install another NumPy build here: Isaac Sim 6.0.1 already provides NumPy
-# 2.3.x. Numba is intentionally omitted because DifFlow3D does not import it,
-# and the older Numba 0.61.2 release rejects NumPy 2.3 at import time.
-# --no-deps prevents pip from replacing Isaac Sim's bundled packages.
-RUN /isaac-sim/python.sh -m pip install \
+# Install the remaining runtime packages into the same isolated target.
+#
+# NVIDIA Warp is imported as `warp` although the PyPI package is named
+# `warp-lang`.
+#
+# The Ultralytics headless package exposes the normal `ultralytics` Python API
+# but depends on opencv-python-headless, avoiding an additional Qt/OpenCV GUI
+# stack inside the Isaac Sim + RViz container.
+#
+# PYTHONPATH exposes the CUDA Torch/TorchVision pair installed above to pip's
+# resolver so Ultralytics does not pull a second Torch/CUDA stack from PyPI.
+RUN PYTHONPATH=/opt/difflow-python-packages \
+    /isaac-sim/python.sh -m pip install \
       --no-cache-dir \
-      --no-deps \
       --target /opt/difflow-python-packages \
+      warp-lang==${WARP_VERSION} \
+      ultralytics-opencv-headless==${ULTRALYTICS_VERSION} \
       scipy==1.15.3 \
       scikit-learn==1.6.1 \
       joblib==1.4.2 \
@@ -311,7 +332,6 @@ RUN /isaac-sim/python.sh -m pip install \
       cffi==1.17.1 \
       pycparser==2.22 \
       pypng==0.20220715.0 \
-      "ultralytics-thop>=2.0.18" \
       PyYAML==6.0.2 \
       Pillow==11.2.1
 
@@ -394,32 +414,49 @@ RUN extension_path="$(find /opt/DifFlow3D/pointnet2 -maxdepth 1 \
     && echo "PointNet++ extension: ${extension_path}" \
     && ldd "${extension_path}" || true
 
-# Validate the isolated PyTorch runtime and then DifFlow3D.
-RUN /isaac-sim/python.sh - <<'PY'
+# Validate Warp, Ultralytics YOLO, the isolated PyTorch runtime and DifFlow3D.
+#
+# A Docker build normally has no GPU device attached, so CUDA availability is
+# printed but is not asserted here. GPU execution is validated after starting
+# the image with `docker run --gpus all`.
+RUN YOLO_CONFIG_DIR=/tmp/ultralytics-build-config \
+    /isaac-sim/python.sh - <<'PY'
 import sys
+
+import cv2
 import numpy
+import scipy
+import sklearn
 import torch
+import torchvision
+import warp as wp
+import yaml
+import PIL
+import ultralytics
+from ultralytics import YOLO
+
+import pointnet2_cuda
+from pointnet2 import pointnet2_utils
+
+wp.init()
 
 print("Isaac Python:", sys.version)
 print("Isaac executable:", sys.executable)
 print("Isaac numpy:", numpy.__version__)
 print("Isaac torch:", torch.__version__)
+print("Isaac torchvision:", torchvision.__version__)
 print("Isaac torch CUDA:", torch.version.cuda)
 print("CUDA available during docker build:", torch.cuda.is_available())
-
-import scipy
-import sklearn
-import yaml
-import PIL
-import thop
-import pointnet2_cuda
-from pointnet2 import pointnet2_utils
-
+print("Warp:", wp.__version__)
+print("Warp devices during build:", wp.get_devices())
+print("OpenCV:", cv2.__version__)
+print("Ultralytics:", ultralytics.__version__)
+print("YOLO class:", YOLO)
 print("scipy:", scipy.__version__)
 print("sklearn:", sklearn.__version__)
 print("pointnet2_cuda:", pointnet2_cuda.__file__)
 print("pointnet2_utils:", pointnet2_utils.__file__)
-print("DifFlow3D PointNet++ import in Isaac Python OK")
+print("Warp + YOLO + DifFlow3D imports in Isaac Python OK")
 PY
 
 # Prepare only the directories that must be writable at run time.
@@ -438,8 +475,11 @@ RUN install -d -o 1234 -g 1234 -m 0775 \
       /isaac-sim/.cache \
       /isaac-sim/.cache/ov \
       /isaac-sim/.cache/warp \
+      /isaac-sim/.cache/matplotlib \
       /isaac-sim/.nv \
       /isaac-sim/.nv/ComputeCache \
+      /isaac-sim/.config \
+      /isaac-sim/.config/Ultralytics \
       /isaac-sim/.nvidia-omniverse \
       /isaac-sim/.nvidia-omniverse/logs \
       /isaac-sim/.nvidia-omniverse/config \
@@ -450,6 +490,8 @@ RUN install -d -o 1234 -g 1234 -m 0775 \
       /isaac-sim/.local/share/ov/pkg \
     && test -r /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
     && test -r /opt/difflow-python-packages/torch/__init__.py \
+    && test -r /opt/difflow-python-packages/warp/__init__.py \
+    && test -r /opt/difflow-python-packages/ultralytics/__init__.py \
     && test -x /opt/ros/jazzy/bin/rviz2
 
 USER 1234:1234

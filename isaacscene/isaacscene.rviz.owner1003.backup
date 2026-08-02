@@ -1,0 +1,160 @@
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+
+Visualization Manager:
+  Class: ""
+  Displays:
+  - Class: rviz_default_plugins/Grid
+    Enabled: true
+    Name: Grid
+    Alpha: 0.4
+    Cell Size: 0.25
+    Plane: XY
+    Plane Cell Count: 20
+    Value: true
+
+  - Class: rviz_default_plugins/TF
+    Enabled: true
+    Name: Camera TF
+    Frame Timeout: 15
+    Marker Alpha: 0.8
+    Marker Scale: 0.3
+    Show Arrows: true
+    Show Axes: true
+    Show Names: true
+    Update Interval: 0
+    Value: true
+
+  - Class: rviz_default_plugins/PointCloud2
+    Enabled: true
+    Name: Camera 0 point cloud
+    Alpha: 1
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 1
+      Min Value: 0
+      Value: true
+    Axis: Z
+    Channel Name: rgb
+    Color Transformer: RGB8
+    Decay Time: 0
+    Position Transformer: XYZ
+    Selectable: false
+    Size (Pixels): 2
+    Size (m): 0.006
+    Style: Flat Squares
+    Topic:
+      Depth: 2
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /camera_0/points
+    Use Fixed Frame: true
+    Value: true
+
+  - Class: rviz_default_plugins/PointCloud2
+    Enabled: true
+    Name: Camera 1 point cloud
+    Alpha: 1
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 1
+      Min Value: 0
+      Value: true
+    Axis: Z
+    Channel Name: rgb
+    Color Transformer: RGB8
+    Decay Time: 0
+    Position Transformer: XYZ
+    Selectable: false
+    Size (Pixels): 2
+    Size (m): 0.006
+    Style: Flat Squares
+    Topic:
+      Depth: 2
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /camera_1/points
+    Use Fixed Frame: true
+    Value: true
+
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: Camera pyramids
+    Namespaces:
+      camera_pyramids: true
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /cameras/visualization
+    Value: true
+
+  - Class: rviz_default_plugins/Image
+    Enabled: true
+    Name: Camera 0 RGB
+    Normalize Range: true
+    Topic:
+      Depth: 4
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /camera_0/color/image_raw
+    Value: true
+
+  - Class: rviz_default_plugins/Image
+    Enabled: true
+    Name: Camera 1 RGB
+    Normalize Range: true
+    Topic:
+      Depth: 4
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /camera_1/color/image_raw
+    Value: true
+
+  Enabled: true
+  Global Options:
+    Background Color: 35; 35; 38
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/FocusCamera
+
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 4.0
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.8
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.55
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 4.0
+    Saved: ~
+
+Window Geometry:
+  Height: 900
+  Width: 1400
+  X: 80
+  Y: 40

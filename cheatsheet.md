@@ -2,7 +2,6 @@
 
 docker build -f Dockerfile -t difflow3d-isaacsim:6.0.1 .
 
-
 # Run the docker:
 
 docker run --rm -it \
@@ -17,7 +16,7 @@ docker run --rm -it \
   -e OMNICLIENT_HUB_MODE=disabled \
   -e DISPLAY="$DISPLAY" \
   -e HOME=/isaac-sim \
-  -e ROS_DOMAIN_ID=100 \
+  -e ROS_DOMAIN_ID=117 \
   -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "$HOME/docker/isaac-sim/cache/main:/isaac-sim/.cache:rw" \
@@ -35,26 +34,31 @@ docker run --rm -it \
 
 /isaac-sim/python.sh \
   /workspace/isaacscene/run_isaacsim.py \
+    --scene dynamic \
     --width 640 \
     --height 480 \
     --camera-hz 30 \
-    --max-depth 5.0 \
+    --pointcloud-hz 30 \
     --corrupt \
-    --headless \
-    --no-isaac-visualization
+    --no-rgb-corruption
 
 # Run Rviz for pcd visualization:
 
 rviz2 -d /workspace/isaacscene/isaacscene.rviz
 
+# Check RGB-D publication frequency
 
+python3 \
+  /workspace/isaacscene/python_image_rate_subscriber.py \
+  --topic /camera_0/depth/image_raw \
+  --reliability reliable \
+  --expected-hz 30
 
+# If cannot write to isaacscene.rviz:
 
-
-
-
-
-
+mv isaacscene.rviz isaacscene.rviz.owner1003.backup
+cp isaacscene.rviz.owner1003.backup isaacscene.rviz
+chmod u+rw isaacscene.rviz
 
 
 
@@ -69,7 +73,7 @@ docker run --rm -it \
   --network host \
   --ipc=host \
   -e DISPLAY="$DISPLAY" \
-  -e ROS_DOMAIN_ID=100 \
+  -e ROS_DOMAIN_ID=117 \
   -v "$PWD:/workspace" \
   difflow3d-test
 

@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "backend": "warp",
+  "seed": 7,
+  "corrupt_rgb": false,
+  "corrupt_depth": true,
+  "rgb_noise_std_255": 2.0,
+  "exposure_fraction": 0.1,
+  "depth_noise_base_m": 0.0015,
+  "depth_noise_quadratic": 0.0015,
+  "depth_quantization_m": 0.001,
+  "random_dropout_probability": 0.005,
+  "edge_dropout_probability": 0.1,
+  "edge_threshold_m": 0.025
+}

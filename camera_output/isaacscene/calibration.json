@@ -92,7 +92,9 @@
       "focal_length_mm": 24.0,
       "horizontal_aperture_mm": 20.955,
       "near_m": 0.05,
-      "far_m": 10.0
+      "far_m": 10.0,
+      "annotator_device": "cuda",
+      "corruption_backend": "warp"
     },
     "camera_1": {
       "prim_path": "/World/Cameras/camera_1",
@@ -180,7 +182,9 @@
       "focal_length_mm": 28.0,
       "horizontal_aperture_mm": 20.955,
       "near_m": 0.05,
-      "far_m": 10.0
+      "far_m": 10.0,
+      "annotator_device": "cuda",
+      "corruption_backend": "warp"
     }
   }
 }

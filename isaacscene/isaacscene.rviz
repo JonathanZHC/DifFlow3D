@@ -3,18 +3,9 @@ Panels:
     Help Height: 0
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /Global Options1
-        - /Primary fused cloud1
-        - /Camera frustums and images1
-      Splitter Ratio: 0.550000011920929
-    Tree Height: 901
-  - Class: rviz_common/Selection
-    Name: Selection
-  - Class: rviz_common/Tool Properties
-    Expanded: ~
-    Name: Tool Properties
-    Splitter Ratio: 0.5
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 869
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -23,15 +14,15 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 0.44999998807907104
+    - Alpha: 0.4000000059604645
       Cell Size: 0.25
       Class: rviz_default_plugins/Grid
-      Color: 120; 120; 125
+      Color: 160; 160; 164
       Enabled: true
       Line Style:
         Line Width: 0.029999999329447746
         Value: Lines
-      Name: Table grid
+      Name: Grid
       Normal Cell Count: 0
       Offset:
         X: 0
@@ -48,13 +39,23 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-      Marker Scale: 0.3499999940395355
+        camera_0_optical_frame:
+          Value: true
+        camera_1_optical_frame:
+          Value: true
+        world:
+          Value: true
+      Marker Scale: 0.30000001192092896
       Name: Camera TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        {}
+        world:
+          camera_0_optical_frame:
+            {}
+          camera_1_optical_frame:
+            {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -72,12 +73,12 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 1
+      Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: Primary fused cloud
+      Name: Camera 0 point cloud
       Position Transformer: XYZ
-      Selectable: true
+      Selectable: false
       Size (Pixels): 2
       Size (m): 0.006000000052154064
       Style: Flat Squares
@@ -85,10 +86,10 @@ Visualization Manager:
         Depth: 2
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /cameras/fused_points
+        Reliability Policy: Reliable
+        Value: /camera_0/points
       Use Fixed Frame: true
-      Use rainbow: false
+      Use rainbow: true
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -102,15 +103,15 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: RGB8
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 1
+      Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: Camera 0 cloud
+      Name: Camera 1 point cloud
       Position Transformer: XYZ
-      Selectable: true
+      Selectable: false
       Size (Pixels): 2
       Size (m): 0.006000000052154064
       Style: Flat Squares
@@ -118,49 +119,16 @@ Visualization Manager:
         Depth: 2
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /camera_0/points
-      Use Fixed Frame: true
-      Use rainbow: false
-      Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 1
-        Min Value: 0
-        Value: true
-      Axis: Z
-      Channel Name: rgb
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: RGB8
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 1
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: Camera 1 cloud
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 2
-      Size (m): 0.006000000052154064
-      Style: Flat Squares
-      Topic:
-        Depth: 2
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Value: /camera_1/points
       Use Fixed Frame: true
-      Use rainbow: false
-      Value: false
+      Use rainbow: true
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Camera frustums and images
+      Name: Camera pyramids
       Namespaces:
-        {}
+        camera_pyramids: true
       Topic:
         Depth: 1
         Durability Policy: Transient Local
@@ -176,10 +144,10 @@ Visualization Manager:
       Name: Camera 0 RGB
       Normalize Range: true
       Topic:
-        Depth: 2
+        Depth: 4
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Value: /camera_0/color/image_raw
       Value: true
     - Class: rviz_default_plugins/Image
@@ -190,62 +158,12 @@ Visualization Manager:
       Name: Camera 1 RGB
       Normalize Range: true
       Topic:
-        Depth: 2
+        Depth: 4
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Value: /camera_1/color/image_raw
       Value: true
-    - Class: rviz_default_plugins/Camera
-      Enabled: false
-      Far Plane Distance: 100
-      Image Rendering: overlay
-      Name: Camera 0 calibrated view
-      Overlay Alpha: 0.5
-      Topic:
-        Depth: 2
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /camera_0/color/image_raw
-      Value: false
-      Visibility:
-        Camera 0 RGB: true
-        Camera 0 cloud: true
-        Camera 1 RGB: true
-        Camera 1 calibrated view: true
-        Camera 1 cloud: true
-        Camera TF: true
-        Camera frustums and images: true
-        Primary fused cloud: true
-        Table grid: true
-        Value: true
-      Zoom Factor: 1
-    - Class: rviz_default_plugins/Camera
-      Enabled: false
-      Far Plane Distance: 100
-      Image Rendering: overlay
-      Name: Camera 1 calibrated view
-      Overlay Alpha: 0.5
-      Topic:
-        Depth: 2
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /camera_1/color/image_raw
-      Value: false
-      Visibility:
-        Camera 0 RGB: true
-        Camera 0 calibrated view: true
-        Camera 0 cloud: true
-        Camera 1 RGB: true
-        Camera 1 cloud: true
-        Camera TF: true
-        Camera frustums and images: true
-        Primary fused cloud: true
-        Table grid: true
-        Value: true
-      Zoom Factor: 1
   Enabled: true
   Global Options:
     Background Color: 35; 35; 38
@@ -258,16 +176,6 @@ Visualization Manager:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
-    - Class: rviz_default_plugins/Measure
-      Line color: 128; 128; 0
-    - Class: rviz_default_plugins/PublishPoint
-      Single click: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /clicked_point
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -275,7 +183,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 4.199999809265137
+      Distance: 4
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -284,7 +192,7 @@ Visualization Manager:
       Focal Point:
         X: 0
         Y: 0
-        Z: 0.75
+        Z: 0.800000011920929
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -298,22 +206,14 @@ Visualization Manager:
 Window Geometry:
   Camera 0 RGB:
     collapsed: false
-  Camera 0 calibrated view:
-    collapsed: false
   Camera 1 RGB:
-    collapsed: false
-  Camera 1 calibrated view:
     collapsed: false
   Displays:
     collapsed: false
   Height: 2022
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000200000000000001da00000754fc0200000005fb0000003000430061006d00650072006100200031002000630061006c0069006200720061007400650064002000760069006500770000000000ffffffff0000002100fffffffb0000003000430061006d00650072006100200030002000630061006c0069006200720061007400650064002000760069006500770000000000ffffffff0000002100fffffffb0000001800430061006d0065007200610020003100200052004700420100000069000001ad0000002100fffffffb0000001800430061006d0065007200610020003000200052004700420100000222000001a60000002100fffffffb000000100044006900730070006c00610079007301000003d4000003e90000017800ffffff00000001000002d800000754fc0200000003fb0000000a005600690065007700730100000069000004850000012300fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007301000004fa00000146000000ab00fffffffb0000001200530065006c0065006300740069006f006e010000064c00000171000000ab00ffffff000009b20000075400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
-  Selection:
-    collapsed: false
-  Tool Properties:
-    collapsed: false
+  QMainWindow State: 000000ff00000000fd0000000200000000000001fc00000754fc0200000003fb0000001800430061006d0065007200610020003000200052004700420100000069000001b60000002100fffffffb0000001800430061006d006500720061002000310020005200470042010000022b000001bd0000002100fffffffb000000100044006900730070006c00610079007301000003f4000003c90000017800ffffff00000001000002d800000754fc0200000001fb0000000a005600690065007700730100000069000007540000012300ffffff000009900000075400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
   Width: 3708
