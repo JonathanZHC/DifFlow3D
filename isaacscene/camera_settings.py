@@ -497,10 +497,25 @@ def capture_all_cameras(
             )
 
         if corruption.enabled and corruption.corrupt_depth:
+            if depth_gpu.ndim == 1:
+                expected_size = rig.height * rig.width
+
+                if depth_gpu.size != expected_size:
+                    raise RuntimeError(
+                        f"{runtime.spec.name} flattened depth has "
+                        f"{depth_gpu.size} elements, expected "
+                        f"{rig.height}x{rig.width}={expected_size}."
+                    )
+
+                depth_gpu = depth_gpu.reshape(
+                    (rig.height, rig.width)
+                )
+
             active_depth_gpu = _ensure_depth_output(
                 runtime,
                 depth_gpu,
             )
+
             wp.launch(
                 kernel=depth_camera_corruption_wp,
                 dim=(rig.height, rig.width),

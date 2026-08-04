@@ -7,6 +7,7 @@ docker build -f Dockerfile -t difflow3d-isaacsim:6.0.1 .
 docker run --rm -it \
   --name isaacscene-gui \
   --gpus all \
+  --device=/dev/dri:/dev/dri \
   --network=host \
   --ipc=host \
   --ulimit memlock=-1 \
@@ -15,16 +16,17 @@ docker run --rm -it \
   -e PRIVACY_CONSENT=Y \
   -e OMNICLIENT_HUB_MODE=disabled \
   -e DISPLAY="$DISPLAY" \
-  -e HOME=/isaac-sim \
+  -e HOME=/tmp \
+  -e XDG_CACHE_HOME=/tmp/.cache \
+  -e XDG_RUNTIME_DIR=/tmp/runtime-isaac-sim \
+  -e MPLCONFIGDIR=/tmp/.cache/matplotlib \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=all \
+  -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  -e __NV_PRIME_RENDER_OFFLOAD=1 \
   -e ROS_DOMAIN_ID=117 \
   -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  -v "$HOME/docker/isaac-sim/cache/main:/isaac-sim/.cache:rw" \
-  -v "$HOME/docker/isaac-sim/cache/computecache:/isaac-sim/.nv/ComputeCache:rw" \
-  -v "$HOME/docker/isaac-sim/logs:/isaac-sim/.nvidia-omniverse/logs:rw" \
-  -v "$HOME/docker/isaac-sim/config:/isaac-sim/.nvidia-omniverse/config:rw" \
-  -v "$HOME/docker/isaac-sim/data:/isaac-sim/.local/share/ov/data:rw" \
-  -v "$HOME/docker/isaac-sim/pkg:/isaac-sim/.local/share/ov/pkg:rw" \
   -v "$PWD/isaacscene:/workspace/isaacscene:rw" \
   -v "$PWD/camera_output:/workspace/camera_output:rw" \
   difflow3d-isaacsim:6.0.1 \
