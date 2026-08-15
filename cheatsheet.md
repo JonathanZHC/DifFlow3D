@@ -1,114 +1,74 @@
-# Build the docker:
+# DifFlow3D deployment cheatsheet
 
-docker build -t difflow3d-test .
+## Build
 
+```bash
+cd /workspace
+bash scripts/build_pointnet2_ops.sh
+```
 
-# Run the docker:
+## Main benchmark
 
-docker run --rm -it \
-  --gpus all \
-  --network host \
-  --ipc=host \
-  -e DISPLAY="$DISPLAY" \
-  -e ROS_DOMAIN_ID=117 \
-  -v "$PWD:/workspace" \
-  difflow3d-test
+```bash
+python3 scripts/test_voxel_difflow.py --config configs/config.yaml
+```
 
+## Recovery kernel validation
 
-# Run the script:
+```bash
+python3 scripts/test_runtime_ops.py \
+  --device cuda:0 \
+  --points 2048 \
+  --queries 96000 \
+  --sigma 0.025 \
+  --radius-sigma 4
+```
 
-rviz2 -d test_scene_flow.rviz
+## Recovery sweep
 
-python3 test_difflow3d_superquadrics.py \
-  --difflow-repo /workspace \
-  --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
-  --frames 300 \
-  --sensor-hz 30 \
-  --difflow-num-points 4096 \
-  --difflow-iters 4 \
-  --difflow-uncertainty 0.2 \
-  --cuda-graph-warmup 10 \
-  --warmup 1 \
-  --rviz 
+```bash
+python3 scripts/benchmark_recovery.py --config configs/config.yaml
+```
 
-Note: 
-frames=300, sensor-hz=30, difflow-num-points=1024/2048, difflow-iters=4 
-frames=300, sensor-hz=30, difflow-num-points=4096, difflow-iters=2/4
-frames=100, sensor-hz=10, difflow-num-points=8192, difflow-iters=2 
+## Iteration sweep
 
+```bash
+python3 scripts/benchmark_optimizations.py --config configs/config.yaml
+```
 
-# For Cuda profiler:
+## Current deployment settings
 
-python3 test_difflow3d_superquadrics_profiled.py \
-  --difflow-repo /workspace \
-  --model-module model_difflow_profiled \
-  --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
-  --frames 100 \
-  --sensor-hz 30 \
-  --difflow-num-points 2048 \
-  --difflow-iters 2 \
-  --difflow-uncertainty 0.2 \
-  --execution-backend cuda-graph \
-  --cuda-graph-warmup 10 \
-  --cuda-graph-no-fallback \
-  --enable-tf32 \
-  --warmup 1 \
-  --rviz \
-  --profile-cuda \
-  --profile-only \
-  --profile-output-dir ./profiles/difflow_2048_iters4 \
-  --profile-warmup 10 \
-  --profile-wait 1 \
-  --profile-schedule-warmup 2 \
-  --profile-active 5 \
-  --profile-repeat 1 \
-  --profile-row-limit 100
+```yaml
+runtime:
+  enable_tf32: true
 
+model:
+  iterations: {coarse: 4, middle: 2, fine: 2}
 
+preprocessing:
+  fps_points: 2048
+  second_candidate_ratio: 1.1
+  final_selection: uniform
+  auto_spatial_scale: true
+  target_model_volume: 2.0
 
+recovery:
+  softmax_sigma_m: 0.025
+  backend: local
+  local_radius_sigma: 4.0
+  local_hash_size_factor: 4.0
 
-With distance-based softmax:
+rviz:
+  enabled: false
+```
 
-python3 test_voxel_fps_difflow3d.py \
-    --difflow-repo /workspace \
-    --model-module model_difflow \
-    --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
-    --all-points 300000 \
-    --voxel-resolution 0.010 \
-    --enable-second-downsample \
-    --second-voxel-resolution 0 \
-    --second-candidate-ratio 2.5 \
-    --fps-points 2048 \
-    --difflow-iters 4 \
-    --recovery-method softmax \
-    --recovery-softmax-sigma 0.025 \
-    --frames 300 \
-    --sensor-hz 30 \
-    --warmup 2 \
-    --rviz 
+## Recovery backends
 
-Or with inverse-distance weighted sum:
+```text
+global  exact CUDA reference
+local   radius-local CUDA hash grid; exact-global fallback if empty
+torch   exact chunked PyTorch fallback
+auto    global if available, else torch
+```
 
-python3 test_voxel_fps_difflow3d.py \
-    --difflow-repo /workspace \
-    --model-module model_difflow \
-    --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
-    --all-points 300000 \
-    --voxel-resolution 0.010 \
-    --enable-second-downsample \
-    --second-voxel-resolution 0 \
-    --second-candidate-ratio 2.5 \
-    --fps-points 2048 \
-    --difflow-iters 4 \
-    --recovery-method inverse-distance \
-    --recovery-idw-power 2.0 \
-    --recovery-idw-epsilon 1e-5 \
-    --recovery-chunk-size 4096 \
-    --frames 300 \
-    --sensor-hz 30 \
-    --warmup 2 \
-    --rviz 
-
-For visualization:
-
-rviz2 -d voxel_fps_difflow3d.rviz
+`softmax_sigma_m` is always in world metres.

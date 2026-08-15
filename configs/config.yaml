@@ -1,0 +1,111 @@
+# Single inference/deployment configuration for this repository.
+runtime:
+  device: cuda
+  enable_tf32: true
+  cuda_graph_warmup: 10
+  # Finite checks synchronize GPU -> CPU; keep false in deployment.
+  validate_finite: false
+
+model:
+  checkpoint: checkpoints/model_difflow_355_0.0114.pth
+  # Pyramid refinement counts: coarse=512, middle=1024, fine=2048 points.
+  iterations:
+    coarse: 4
+    middle: 2
+    fine: 2
+  uncertainty: 0.20
+  strict_checkpoint: true
+  disable_bn_running_stats: true
+
+preprocessing:
+  # Fixed CUDA-Graph/model input count. Must be >= 1024.
+  fps_points: 2048
+  # Adaptive voxel-2 targets ceil(ratio * fps_points) candidates.
+  second_candidate_ratio: 1.1
+  # fps | uniform. Uniform is the measured-fast deployment default.
+  final_selection: uniform
+
+  auto_spatial_scale: true
+  target_model_volume: 2.0       # used when auto_spatial_scale=true
+  fixed_spatial_scale: 1.0       # used when auto_spatial_scale=false
+
+recovery:
+  # Real/world metric bandwidth in metres; never canonicalized.
+  softmax_sigma_m: 0.025
+  # auto | global | local | torch
+  # local is the measured-fast deployment path; global is the exact baseline.
+  backend: local
+  local_radius_sigma: 4.0
+  local_hash_size_factor: 4.0
+  # Diagnostics are intentionally outside the timed region, but leave disabled
+  # for normal deployment runs.
+  report_local_stats: false
+  # Used only by the exact PyTorch fallback.
+  chunk_size: 4096
+
+profiling:
+  # Keep true while tuning; disable for final absolute deployment timing.
+  detailed_runtime_breakdown: true
+
+benchmark:
+  dimension_factor: 1.0
+  motion: true
+  all_points: 300000
+  voxel_resolution_m: 0.010
+  sensor_noise_std_m: 0.0056666666667
+  mesh_resolution: 80
+  same_samples_across_frames: true
+  frames: 300
+  sensor_hz: 30.0
+  warmup: 2
+  seed: 42
+  realtime: false
+  json_output: null
+
+# Optional 2048-point iteration sweep. Sampling/recovery choices stay fixed.
+optimization_sweep:
+  frames: 80
+  profiles:
+    - name: accurate_442
+      iterations: {coarse: 4, middle: 4, fine: 2}
+      final_selection: uniform
+    - name: balanced_432
+      iterations: {coarse: 4, middle: 3, fine: 2}
+      final_selection: uniform
+    - name: deployment_422
+      iterations: {coarse: 4, middle: 2, fine: 2}
+      final_selection: uniform
+
+# Optional recovery sweep with the model/preprocessing configuration fixed.
+recovery_sweep:
+  frames: 120
+  profiles:
+    - name: exact_global
+      backend: global
+    - name: local_5sigma
+      backend: local
+      local_radius_sigma: 5.0
+    - name: local_4sigma
+      backend: local
+      local_radius_sigma: 4.0
+
+superquadrics_benchmark:
+  point_multiplier: 1
+  frames: 20
+  sensor_hz: 30.0
+  warmup: 2
+  mesh_resolution: 80
+  same_samples_across_frames: true
+  seed: 42
+  realtime: false
+
+rviz:
+  # Keep off for performance measurements.
+  enabled: false
+  config: rviz/voxel_difflow.rviz
+  frame_id: world
+  max_arrows: 1024
+  vector_scale: 10.0
+  cloud_max_points: 100000
+  publish_every: 1
+  hold_seconds: 5.0
