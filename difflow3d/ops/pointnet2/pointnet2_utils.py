@@ -321,6 +321,13 @@ def has_gaussian_softmax_recovery_local() -> bool:
     )
 
 
+def has_gaussian_softmax_recovery_local_track_aware() -> bool:
+    return (
+        has_gaussian_softmax_recovery_local()
+        and hasattr(pointnet2, "gaussian_softmax_recovery_local_track_aware_wrapper")
+    )
+
+
 def _validate_gaussian_inputs(
     queries: torch.Tensor,
     anchors: torch.Tensor,
@@ -443,3 +450,104 @@ def gaussian_softmax_recovery_local(
         local_neighbor_counts,
     )
     return output, local_neighbor_counts
+
+def _validate_gaussian_track_ids(
+    track_ids: torch.Tensor,
+    count: int,
+    device: torch.device,
+    name: str,
+) -> torch.Tensor:
+    if track_ids.ndim != 1 or track_ids.shape[0] != count:
+        raise ValueError(f"{name} must have shape [{count}]")
+    if track_ids.device != device:
+        raise ValueError(f"{name} must be on {device}")
+    if track_ids.dtype != torch.int32:
+        track_ids = track_ids.to(dtype=torch.int32)
+    return track_ids.contiguous()
+
+
+@torch.no_grad()
+def gaussian_softmax_recovery_local_track_aware(
+    queries: torch.Tensor,
+    anchors: torch.Tensor,
+    anchor_flow: torch.Tensor,
+    query_track_ids: torch.Tensor,
+    anchor_track_ids: torch.Tensor,
+    sigma: float,
+    *,
+    radius_sigma: float = 4.0,
+    hash_size_factor: float = 4.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Single-call local recovery conditioned on persistent track identity.
+
+    Spatial hashing is built once for all anchors. During neighborhood traversal
+    the CUDA kernel ignores anchors whose track ID differs from the query track
+    ID. A query with no same-track local neighbor falls back to exact global
+    same-track softmax. If the selected anchor set contains no anchor for that
+    track at all, the fallback deliberately reverts to the all-anchor exact
+    softmax, matching ScenePredictor's previous tiny-instance safety behavior.
+    """
+    if not has_gaussian_softmax_recovery_local_track_aware():
+        raise RuntimeError(
+            "pointnet2_cuda was built without track-aware local Gaussian recovery"
+        )
+    if radius_sigma <= 0.0:
+        raise ValueError("radius_sigma must be positive")
+    if hash_size_factor < 1.0:
+        raise ValueError("hash_size_factor must be >= 1.0")
+
+    queries, anchors, anchor_flow = _validate_gaussian_inputs(
+        queries, anchors, anchor_flow, sigma
+    )
+    query_track_ids = _validate_gaussian_track_ids(
+        query_track_ids, int(queries.shape[0]), queries.device, "query_track_ids"
+    )
+    anchor_track_ids = _validate_gaussian_track_ids(
+        anchor_track_ids, int(anchors.shape[0]), anchors.device, "anchor_track_ids"
+    )
+
+    radius = float(radius_sigma) * float(sigma)
+    cell_size = radius
+    anchor_count = int(anchors.shape[0])
+    hash_size = _next_power_of_two(
+        max(32, math.ceil(anchor_count * hash_size_factor))
+    )
+
+    hash_heads = torch.empty(
+        (hash_size,), device=anchors.device, dtype=torch.int32
+    )
+    anchor_next = torch.empty(
+        (anchor_count,), device=anchors.device, dtype=torch.int32
+    )
+    anchor_cells = torch.empty(
+        (anchor_count, 3), device=anchors.device, dtype=torch.int32
+    )
+    pointnet2.gaussian_recovery_hash_build_wrapper(
+        anchors,
+        float(cell_size),
+        hash_heads,
+        anchor_next,
+        anchor_cells,
+    )
+
+    output = torch.empty_like(queries)
+    local_neighbor_counts = torch.empty(
+        (queries.shape[0],), device=queries.device, dtype=torch.int32
+    )
+    pointnet2.gaussian_softmax_recovery_local_track_aware_wrapper(
+        queries,
+        anchors,
+        anchor_flow,
+        query_track_ids,
+        anchor_track_ids,
+        float(sigma),
+        float(radius),
+        float(cell_size),
+        hash_heads,
+        anchor_next,
+        anchor_cells,
+        output,
+        local_neighbor_counts,
+    )
+    return output, local_neighbor_counts
+

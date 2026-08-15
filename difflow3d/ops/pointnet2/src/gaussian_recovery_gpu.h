@@ -44,3 +44,26 @@ void gaussian_softmax_recovery_local_kernel_launcher(
     float *output_flow,
     int *local_neighbor_counts,
     cudaStream_t stream);
+
+// Track-aware radius-local Gaussian softmax. The hash grid is shared across all
+// anchors, but each query only accumulates anchors with the same persistent ID.
+// A missing local neighbor falls back to exact global same-track recovery; if no
+// same-track anchor exists at all, the final safety fallback uses all anchors.
+void gaussian_softmax_recovery_local_track_aware_kernel_launcher(
+    int query_count,
+    int anchor_count,
+    int hash_size,
+    float sigma,
+    float radius,
+    float cell_size,
+    const float *queries,
+    const float *anchors,
+    const float *anchor_flow,
+    const int *query_track_ids,
+    const int *anchor_track_ids,
+    const int *hash_heads,
+    const int *anchor_next,
+    const int *anchor_cells,
+    float *output_flow,
+    int *local_neighbor_counts,
+    cudaStream_t stream);

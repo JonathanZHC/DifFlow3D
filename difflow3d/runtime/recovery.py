@@ -26,7 +26,8 @@ class SoftmaxAnchorMotionRecoverer:
     Backends:
       * ``global``: exact all-anchor warp-per-query CUDA kernel.
       * ``local``: radius-truncated CUDA Gaussian softmax over an anchor hash
-        grid. Queries without an in-radius anchor fall back to ``global``.
+        grid. Optional query/anchor track IDs enable one-call same-track
+        conditioning. Queries without an in-radius anchor fall back globally.
       * ``torch``: chunked exact PyTorch reference/fallback.
       * ``auto``: ``global`` when the CUDA extension is available, otherwise
         ``torch``. ``auto`` never silently selects the approximate local path.
@@ -148,6 +149,8 @@ class SoftmaxAnchorMotionRecoverer:
         anchor_points: torch.Tensor,
         anchor_flow: torch.Tensor,
         dt_s: float,
+        query_track_ids: torch.Tensor | None = None,
+        anchor_track_ids: torch.Tensor | None = None,
     ) -> DenseMotionRecovery:
         self._validate_inputs(query_points, anchor_points, anchor_flow, dt_s)
         if self.backend != "torch" and query_points.device.type != "cuda":
@@ -159,21 +162,46 @@ class SoftmaxAnchorMotionRecoverer:
         backend = self.backend
         local_counts: torch.Tensor | None = None
 
+        track_aware = query_track_ids is not None or anchor_track_ids is not None
+        if track_aware:
+            if query_track_ids is None or anchor_track_ids is None:
+                raise ValueError(
+                    "query_track_ids and anchor_track_ids must be provided together"
+                )
+            if backend != "local":
+                raise ValueError(
+                    "track-aware recovery currently requires backend='local'"
+                )
+
         if backend == "global":
             recovered_flow = pointnet2_utils.gaussian_softmax_recovery(
                 queries, anchors, flow, self.softmax_sigma_m
             )
         elif backend == "local":
-            recovered_flow, local_counts = (
-                pointnet2_utils.gaussian_softmax_recovery_local(
-                    queries,
-                    anchors,
-                    flow,
-                    self.softmax_sigma_m,
-                    radius_sigma=self.local_radius_sigma,
-                    hash_size_factor=self.local_hash_size_factor,
+            if track_aware:
+                recovered_flow, local_counts = (
+                    pointnet2_utils.gaussian_softmax_recovery_local_track_aware(
+                        queries,
+                        anchors,
+                        flow,
+                        query_track_ids,
+                        anchor_track_ids,
+                        self.softmax_sigma_m,
+                        radius_sigma=self.local_radius_sigma,
+                        hash_size_factor=self.local_hash_size_factor,
+                    )
                 )
-            )
+            else:
+                recovered_flow, local_counts = (
+                    pointnet2_utils.gaussian_softmax_recovery_local(
+                        queries,
+                        anchors,
+                        flow,
+                        self.softmax_sigma_m,
+                        radius_sigma=self.local_radius_sigma,
+                        hash_size_factor=self.local_hash_size_factor,
+                    )
+                )
         else:
             recovered_flow = self._recover_torch(queries, anchors, flow)
 

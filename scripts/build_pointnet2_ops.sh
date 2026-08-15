@@ -35,6 +35,7 @@ required = (
     'gaussian_softmax_recovery_wrapper',
     'gaussian_recovery_hash_build_wrapper',
     'gaussian_softmax_recovery_local_wrapper',
+    'gaussian_softmax_recovery_local_track_aware_wrapper',
 )
 
 loaded = Path(pointnet2_utils.extension_path()).resolve()

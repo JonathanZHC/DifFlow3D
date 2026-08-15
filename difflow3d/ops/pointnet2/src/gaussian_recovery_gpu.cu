@@ -243,10 +243,83 @@ __device__ __forceinline__ void warp_global_softmax_fallback(
         output_flow);
 }
 
+__device__ __forceinline__ void warp_global_softmax_fallback_track_aware(
+    int lane,
+    int q,
+    int anchor_count,
+    int query_track_id,
+    float inv_two_sigma2,
+    const float qx,
+    const float qy,
+    const float qz,
+    const float *__restrict__ anchors,
+    const float *__restrict__ anchor_flow,
+    const int *__restrict__ anchor_track_ids,
+    float *__restrict__ output_flow) {
+    float local_max = -CUDART_INF_F;
+    float local_denominator = 0.0f;
+    float local_flow_x = 0.0f;
+    float local_flow_y = 0.0f;
+    float local_flow_z = 0.0f;
+    int local_count = 0;
+
+    for (int a = lane; a < anchor_count; a += WARP_SIZE) {
+        if (anchor_track_ids[a] != query_track_id) {
+            continue;
+        }
+        ++local_count;
+        const float dx = qx - anchors[a * 3 + 0];
+        const float dy = qy - anchors[a * 3 + 1];
+        const float dz = qz - anchors[a * 3 + 2];
+        const float logit = -(dx * dx + dy * dy + dz * dz) * inv_two_sigma2;
+        online_softmax_add(
+            logit,
+            anchor_flow[a * 3 + 0],
+            anchor_flow[a * 3 + 1],
+            anchor_flow[a * 3 + 2],
+            local_max,
+            local_denominator,
+            local_flow_x,
+            local_flow_y,
+            local_flow_z);
+    }
+
+    const int total_count_reduced = warp_reduce_sum_int(local_count);
+    const int total_count = __shfl_sync(0xffffffffu, total_count_reduced, 0);
+    if (total_count == 0) {
+        // This only happens when exact-count anchor selection retained no anchor
+        // for a very small track. Preserve the previous ScenePredictor safety
+        // behavior by falling back to the complete anchor set.
+        warp_global_softmax_fallback(
+            lane,
+            q,
+            anchor_count,
+            inv_two_sigma2,
+            qx,
+            qy,
+            qz,
+            anchors,
+            anchor_flow,
+            output_flow);
+        return;
+    }
+
+    merge_and_write_warp_softmax(
+        lane,
+        q,
+        local_max,
+        local_denominator,
+        local_flow_x,
+        local_flow_y,
+        local_flow_z,
+        output_flow);
+}
+
 // Cell size equals the radius cutoff. Any anchor within the Euclidean cutoff
 // must therefore lie in one of the 27 cells around the query cell. Lanes 0..26
 // each own one neighboring cell and traverse only that hash bucket. Hash
 // collisions are rejected by checking the stored integer cell coordinates.
+template <bool TrackAware>
 __global__ void gaussian_softmax_recovery_local_kernel(
     int query_count,
     int anchor_count,
@@ -257,6 +330,8 @@ __global__ void gaussian_softmax_recovery_local_kernel(
     const float *__restrict__ queries,
     const float *__restrict__ anchors,
     const float *__restrict__ anchor_flow,
+    const int *__restrict__ query_track_ids,
+    const int *__restrict__ anchor_track_ids,
     const int *__restrict__ hash_heads,
     const int *__restrict__ anchor_next,
     const int *__restrict__ anchor_cells,
@@ -272,6 +347,7 @@ __global__ void gaussian_softmax_recovery_local_kernel(
     const float qx = queries[q * 3 + 0];
     const float qy = queries[q * 3 + 1];
     const float qz = queries[q * 3 + 2];
+    const int query_track_id = TrackAware ? query_track_ids[q] : 0;
     const int qcx = __float2int_rd(qx * inv_cell_size);
     const int qcy = __float2int_rd(qy * inv_cell_size);
     const int qcz = __float2int_rd(qz * inv_cell_size);
@@ -296,6 +372,9 @@ __global__ void gaussian_softmax_recovery_local_kernel(
             if (anchor_cells[a * 3 + 0] != cx ||
                 anchor_cells[a * 3 + 1] != cy ||
                 anchor_cells[a * 3 + 2] != cz) {
+                continue;
+            }
+            if (TrackAware && anchor_track_ids[a] != query_track_id) {
                 continue;
             }
             const float dx = qx - anchors[a * 3 + 0];
@@ -327,17 +406,33 @@ __global__ void gaussian_softmax_recovery_local_kernel(
     }
 
     if (total_count == 0) {
-        warp_global_softmax_fallback(
-            lane,
-            q,
-            anchor_count,
-            inv_two_sigma2,
-            qx,
-            qy,
-            qz,
-            anchors,
-            anchor_flow,
-            output_flow);
+        if (TrackAware) {
+            warp_global_softmax_fallback_track_aware(
+                lane,
+                q,
+                anchor_count,
+                query_track_id,
+                inv_two_sigma2,
+                qx,
+                qy,
+                qz,
+                anchors,
+                anchor_flow,
+                anchor_track_ids,
+                output_flow);
+        } else {
+            warp_global_softmax_fallback(
+                lane,
+                q,
+                anchor_count,
+                inv_two_sigma2,
+                qx,
+                qy,
+                qz,
+                anchors,
+                anchor_flow,
+                output_flow);
+        }
         return;
     }
 
@@ -417,7 +512,7 @@ void gaussian_softmax_recovery_local_kernel_launcher(
     const float inv_two_sigma2 = 1.0f / (2.0f * sigma * sigma);
     const float radius2 = radius * radius;
     const float inv_cell_size = 1.0f / cell_size;
-    gaussian_softmax_recovery_local_kernel<<<blocks, RECOVERY_THREADS, 0, stream>>>(
+    gaussian_softmax_recovery_local_kernel<false><<<blocks, RECOVERY_THREADS, 0, stream>>>(
         query_count,
         anchor_count,
         hash_size,
@@ -427,6 +522,49 @@ void gaussian_softmax_recovery_local_kernel_launcher(
         queries,
         anchors,
         anchor_flow,
+        nullptr,
+        nullptr,
+        hash_heads,
+        anchor_next,
+        anchor_cells,
+        output_flow,
+        local_neighbor_counts);
+}
+
+void gaussian_softmax_recovery_local_track_aware_kernel_launcher(
+    int query_count,
+    int anchor_count,
+    int hash_size,
+    float sigma,
+    float radius,
+    float cell_size,
+    const float *queries,
+    const float *anchors,
+    const float *anchor_flow,
+    const int *query_track_ids,
+    const int *anchor_track_ids,
+    const int *hash_heads,
+    const int *anchor_next,
+    const int *anchor_cells,
+    float *output_flow,
+    int *local_neighbor_counts,
+    cudaStream_t stream) {
+    const int blocks = (query_count + WARPS_PER_BLOCK - 1) / WARPS_PER_BLOCK;
+    const float inv_two_sigma2 = 1.0f / (2.0f * sigma * sigma);
+    const float radius2 = radius * radius;
+    const float inv_cell_size = 1.0f / cell_size;
+    gaussian_softmax_recovery_local_kernel<true><<<blocks, RECOVERY_THREADS, 0, stream>>>(
+        query_count,
+        anchor_count,
+        hash_size,
+        inv_two_sigma2,
+        radius2,
+        inv_cell_size,
+        queries,
+        anchors,
+        anchor_flow,
+        query_track_ids,
+        anchor_track_ids,
         hash_heads,
         anchor_next,
         anchor_cells,
