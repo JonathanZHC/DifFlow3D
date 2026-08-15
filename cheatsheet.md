@@ -27,8 +27,7 @@ docker run --rm -it \
   -e ROS_DOMAIN_ID=117 \
   -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  -v "$PWD/isaacscene:/workspace/isaacscene:rw" \
-  -v "$PWD/camera_output:/workspace/camera_output:rw" \
+  -v "$PWD:/workspace:rw" \
   difflow3d-isaacsim:6.0.1 \
   /bin/bash
 
@@ -84,12 +83,12 @@ docker run --rm -it \
 
 rviz2 -d test_scene_flow.rviz
 
-python3 test_difflow3d_superquadrics.py \
+/isaac-sim/python.sh test_difflow3d_superquadrics.py \
   --difflow-repo /workspace \
   --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
   --frames 300 \
   --sensor-hz 30 \
-  --difflow-num-points 4096 \
+  --difflow-num-points 2048 \
   --difflow-iters 4 \
   --difflow-uncertainty 0.2 \
   --cuda-graph-warmup 10 \
@@ -134,7 +133,7 @@ python3 test_difflow3d_superquadrics_profiled.py \
 
 With distance-based softmax:
 
-python3 test_voxel_fps_difflow3d.py \
+/isaac-sim/python.sh  test_voxel_fps_difflow3d.py \
     --difflow-repo /workspace \
     --model-module model_difflow \
     --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \
@@ -154,7 +153,7 @@ python3 test_voxel_fps_difflow3d.py \
 
 Or with inverse-distance weighted sum:
 
-python3 test_voxel_fps_difflow3d.py \
+/isaac-sim/python.sh  test_voxel_fps_difflow3d.py \
     --difflow-repo /workspace \
     --model-module model_difflow \
     --checkpoint /opt/DifFlow3D/pretrain_weights/model_difflow_355_0.0114.pth \

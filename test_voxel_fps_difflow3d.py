@@ -33,7 +33,7 @@ import torch
 
 
 # Before using, the pcds should be scaled to 1*1*1 m^3 match the real-world dimensions of the scene.
-DIMENSION_FACTOR = 1.0
+DIMENSION_FACTOR = 1
 MOTION = True
 
 
