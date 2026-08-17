@@ -7,19 +7,25 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG ROS_DISTRO=humble
 ARG PYTORCH_VERSION=2.8.0
 ARG TORCH_CUDA_ARCH_LIST=12.0
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG PIP_VERSION=25.1.1
+ARG SETUPTOOLS_VERSION=69.5.1
+ARG WHEEL_VERSION=0.45.1
 
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
     PIP_NO_CACHE_DIR=1 \
     CUDA_HOME=/usr/local/cuda \
     TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
     FORCE_CUDA=1 \
     MAX_JOBS=4 \
-    DIFFLOW_REPO=/opt/DifFlow3D \
+    DIFFLOW_REPO=/workspace \
     ROS_DOMAIN_ID=100 \
     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    PYTHONPATH=/opt/DifFlow3D:/opt/DifFlow3D/difflow3d/ops/pointnet2:/opt/ros/humble/lib/python3.10/site-packages \
+    PYTHONPATH=/workspace:/workspace/difflow3d/ops/pointnet2:/opt/ros/humble/lib/python3.10/site-packages \
     LD_LIBRARY_PATH=/opt/ros/humble/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -51,21 +57,38 @@ RUN curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --upgrade \
-      pip==25.1.1 setuptools==69.5.1 wheel==0.45.1 \
+      pip==${PIP_VERSION} setuptools==${SETUPTOOLS_VERSION} wheel==${WHEEL_VERSION} \
     && python3 -m pip install \
       torch==${PYTORCH_VERSION} \
-      --index-url https://download.pytorch.org/whl/cu128 \
+      --index-url ${TORCH_INDEX_URL} \
     && python3 -m pip install \
       numpy==1.26.4 scipy==1.13.1 PyYAML==6.0.2 packaging==24.2
 
-COPY . /opt/DifFlow3D
-RUN test -f /opt/DifFlow3D/checkpoints/model_difflow_355_0.0114.pth \
-    && cd /opt/DifFlow3D \
-    && bash scripts/build_pointnet2_ops.sh
+COPY . /workspace
+RUN test -f /workspace/checkpoints/model_difflow_355_0.0114.pth \
+    && cd /workspace \
+    && bash scripts/build_pointnet2_ops.sh \
+    && python3 - <<'PY'
+import torch
+import difflow3d
+from difflow3d.ops.pointnet2 import pointnet2_utils
+print('torch:', torch.__version__, 'cuda:', torch.version.cuda)
+print('DifFlow3D:', difflow3d.__file__)
+print('PointNet++:', pointnet2_utils.extension_path())
+PY
+
+RUN cat > /usr/local/bin/difflow-entrypoint <<'EOF_ENTRYPOINT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f /opt/ros/humble/setup.bash ]]; then
+  set +u
+  source /opt/ros/humble/setup.bash
+  set -u
+fi
+exec "$@"
+EOF_ENTRYPOINT
+RUN chmod +x /usr/local/bin/difflow-entrypoint
 
 WORKDIR /workspace
-
-RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc \
-    && echo 'cd /workspace' >> /root/.bashrc
-
+ENTRYPOINT ["/usr/local/bin/difflow-entrypoint"]
 CMD ["/bin/bash"]
