@@ -25,7 +25,7 @@ ENV LANG=en_US.UTF-8 \
     DIFFLOW_REPO=/workspace \
     ROS_DOMAIN_ID=100 \
     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    PYTHONPATH=/workspace:/workspace/difflow3d/ops/pointnet2:/opt/ros/humble/lib/python3.10/site-packages \
+    PYTHONPATH=/workspace:/opt/ros/humble/lib/python3.10/site-packages \
     LD_LIBRARY_PATH=/opt/ros/humble/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

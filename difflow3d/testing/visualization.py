@@ -104,14 +104,23 @@ class RvizPipelinePublisher:
         target_frame: FirstVoxelFrame,
         estimate: DifFlow3DEstimate,
         recovery: DenseMotionRecovery,
+        anchor_flow_override: torch.Tensor | None = None,
         anchor_gt_flow: np.ndarray,
         first_gt_flow: np.ndarray,
     ) -> None:
         self.publish_buffered(target_frame)
         anchor_source = estimate.source_points.detach().cpu().numpy()
         anchor_target = estimate.target_points.detach().cpu().numpy()
-        anchor_warped = estimate.warped_points.detach().cpu().numpy()
-        anchor_flow = estimate.residual_flow.detach().cpu().numpy()
+        anchor_flow = (
+            estimate.residual_flow
+            if anchor_flow_override is None
+            else anchor_flow_override
+        ).detach().cpu().numpy()
+        # Keep the displayed warped cloud consistent with the arrows.  When a
+        # filtered flow override is supplied, ``estimate.warped_points`` is
+        # still the raw DifFlow warp and would otherwise make RViz show a
+        # misleading mixture of raw and filtered results.
+        anchor_warped = anchor_source + anchor_flow
         first_source = source_frame.first_downsample_points.detach().cpu().numpy()
         first_flow = recovery.flow.detach().cpu().numpy()
         first_warped = first_source + first_flow

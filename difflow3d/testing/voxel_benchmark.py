@@ -11,6 +11,7 @@ from difflow3d.config import voxel_namespace
 from difflow3d.runtime import DifFlow3DConfig, DifFlow3DInference, SoftmaxAnchorMotionRecoverer
 from .synthetic_scene import OnlineSceneFrame, OnlineSceneGenerator, make_obstacle_specs
 from .first_voxel import FirstVoxelFrame, FirstVoxelPreprocessor
+from .temporal_motion import StreamingAnchorMotionEstimator
 from .metrics import cuda_index, synchronize, summarize, print_timing_row, metric_summary, safe_mean
 from .visualization import RvizPipelinePublisher
 
@@ -151,6 +152,11 @@ def run(config: dict) -> None:
     print(f"Anchor model volume:          {float(anchor_info.get('world_volume')) * estimator.runner.spatial_scale**3:.9f}")
     print(f"Recovery softmax sigma:       {effective_recovery_sigma_m:.6f} m")
     print(f"Recovery backend:             {args.recovery_backend}")
+    kf_cfg = config.get("motion_estimation", {}).get("kalman", {})
+    print(f"Velocity-only KF enabled:     {bool(kf_cfg.get('enabled', False))}")
+    if bool(kf_cfg.get("enabled", False)):
+        print(f"KF process velocity std:      {float(kf_cfg.get('process_velocity_std_mps', 0.05)):.4f} m/s/update")
+        print(f"KF measurement std:           {float(kf_cfg.get('measurement_noise_std_mps', 0.10)):.4f} m/s")
     if args.recovery_backend == "local":
         print(f"Recovery local radius:        {args.recovery_local_radius_sigma:.2f} sigma = {args.recovery_local_radius_sigma * effective_recovery_sigma_m:.6f} m")
         print(f"Recovery hash size factor:    {args.recovery_local_hash_size_factor:.2f}")
@@ -170,6 +176,17 @@ def run(config: dict) -> None:
         local_hash_size_factor=args.recovery_local_hash_size_factor,
     )
 
+    temporal_estimator = StreamingAnchorMotionEstimator(config, device=device)
+    raw_track_ids: torch.Tensor | None = None
+    if temporal_estimator.kf_enabled:
+        # Synthetic object IDs act as persistent track IDs for temporal state
+        # transport. Real deployments should supply persistent tracker IDs.
+        raw_track_ids = torch.as_tensor(
+            scene_generator.object_ids,
+            device=device,
+            dtype=torch.int32,
+        ).contiguous()
+
     # Warmup without changing the frozen voxel-2/spatial calibration.
     warm_source_scene = scene_generator.frame(0)
     warm_target_scene = scene_generator.frame(1)
@@ -178,14 +195,27 @@ def run(config: dict) -> None:
         ws = preprocessor.process(warm_source_scene.points, warm_source_scene.timestamp_s)
         wt = preprocessor.process(warm_target_scene.points, warm_target_scene.timestamp_s)
         we = estimator.infer(ws, wt)
+        temporal_estimator.reset()
+        warm_anchor_flow = we.residual_flow
+        if temporal_estimator.kf_enabled:
+            assert raw_track_ids is not None
+            warm_track_ids = raw_track_ids.index_select(0, we.valid_indices)
+            wm = temporal_estimator.estimate(
+                source_points=we.source_points,
+                flow=we.residual_flow,
+                track_ids=warm_track_ids,
+                dt_s=dt_s,
+            )
+            warm_anchor_flow = wm.velocity * float(dt_s)
         _ = recoverer.recover(
             query_points=ws.first_downsample_points,
             anchor_points=we.source_points,
-            anchor_flow=we.residual_flow,
+            anchor_flow=warm_anchor_flow,
             dt_s=dt_s,
         )
         synchronize(device)
     estimator.reset()
+    temporal_estimator.reset()
     torch.cuda.reset_peak_memory_stats(cuda_index(device))
 
     rviz = (
@@ -209,6 +239,7 @@ def run(config: dict) -> None:
         "runner_decode_ms": [],
         "runner_profiled_ms": [],
         "runner_model_total_ms": [],
+        "temporal_filter_ms": [],
         "recovery_ms": [],
         "overall_wall_ms": [],
     }
@@ -220,6 +251,7 @@ def run(config: dict) -> None:
     first_velocity_epe_chunks: list[np.ndarray] = []
     per_frame: list[dict[str, object]] = []
     local_neighbor_frame_stats: list[dict[str, float]] = []
+    temporal_supported_ratios: list[float] = []
 
     previous_prepared: FirstVoxelFrame | None = None
     previous_scene: OnlineSceneFrame | None = None
@@ -264,17 +296,46 @@ def run(config: dict) -> None:
         model_start.record()
         estimate = estimator.infer(previous_prepared, prepared)
         model_end.record()
+
+        # Strict feature flag: disabled is a true bypass with no transport/KF
+        # work or temporal CUDA timing events on the hot path.
+        filtered_anchor_flow = estimate.residual_flow
+        filtered_anchor_velocity = estimate.velocity
+        temporal = None
+        temporal_start = None
+        temporal_end = None
+        if temporal_estimator.kf_enabled:
+            assert raw_track_ids is not None
+            temporal_start = torch.cuda.Event(enable_timing=True)
+            temporal_end = torch.cuda.Event(enable_timing=True)
+            temporal_start.record()
+            anchor_track_ids = raw_track_ids.index_select(0, estimate.valid_indices)
+            temporal = temporal_estimator.estimate(
+                source_points=estimate.source_points,
+                flow=estimate.residual_flow,
+                track_ids=anchor_track_ids,
+                dt_s=dt_s,
+            )
+            filtered_anchor_velocity = temporal.velocity
+            filtered_anchor_flow = filtered_anchor_velocity * float(dt_s)
+            temporal_end.record()
+
         recovery_start.record()
         recovery = recoverer.recover(
             query_points=previous_prepared.first_downsample_points,
             anchor_points=estimate.source_points,
-            anchor_flow=estimate.residual_flow,
+            anchor_flow=filtered_anchor_flow,
             dt_s=dt_s,
         )
         recovery_end.record()
         recovery_end.synchronize()
 
         runner_model_total_ms = float(model_start.elapsed_time(model_end))
+        temporal_filter_ms = (
+            float(temporal_start.elapsed_time(temporal_end))
+            if temporal_start is not None and temporal_end is not None
+            else 0.0
+        )
         recovery_ms = float(recovery_start.elapsed_time(recovery_end))
         overall_wall_ms = 1000.0 * (time.perf_counter() - cycle_start)
 
@@ -309,15 +370,23 @@ def run(config: dict) -> None:
         timing["runner_decode_ms"].append(decode_ms)
         timing["runner_profiled_ms"].append(profiled_runner_ms)
         timing["runner_model_total_ms"].append(runner_model_total_ms)
+        timing["temporal_filter_ms"].append(temporal_filter_ms)
         timing["recovery_ms"].append(recovery_ms)
         timing["overall_wall_ms"].append(overall_wall_ms)
 
         anchor_raw_indices = estimate.valid_indices.detach().cpu().numpy().astype(np.int64)
         first_raw_indices = previous_prepared.first_raw_indices.detach().cpu().numpy().astype(np.int64)
-        anchor_pred_flow = estimate.residual_flow.detach().cpu().numpy()
-        anchor_pred_vel = estimate.velocity.detach().cpu().numpy()
+        anchor_pred_flow = filtered_anchor_flow.detach().cpu().numpy()
+        anchor_pred_vel = filtered_anchor_velocity.detach().cpu().numpy()
         first_pred_flow = recovery.flow.detach().cpu().numpy()
         first_pred_vel = recovery.velocity.detach().cpu().numpy()
+
+        temporal_supported_ratio = (
+            float((temporal.support_counts > 0).float().mean().item())
+            if temporal is not None
+            else 0.0
+        )
+        temporal_supported_ratios.append(temporal_supported_ratio)
 
         anchor_gt_flow = previous_scene.gt_flow_to_next[anchor_raw_indices]
         first_gt_flow = previous_scene.gt_flow_to_next[first_raw_indices]
@@ -354,7 +423,10 @@ def run(config: dict) -> None:
             "runner_decode_ms": decode_ms,
             "runner_profiled_ms": profiled_runner_ms,
             "runner_model_total_ms": runner_model_total_ms,
+            "temporal_filter_ms": temporal_filter_ms,
             "recovery_ms": recovery_ms,
+            "temporal_mode": temporal_estimator.mode_name,
+            "temporal_supported_ratio": temporal_supported_ratio,
             "overall_wall_ms": overall_wall_ms,
             "anchor_mean_epe_m": float(anchor_flow_epe.mean()),
             "first_mean_epe_m": float(first_flow_epe.mean()),
@@ -372,8 +444,8 @@ def run(config: dict) -> None:
             f"V1 {prepared.first_downsample_ms:5.2f}  "
             f"V2 {voxel2_ms:5.2f}  select {selection_ms:5.2f}  "
             f"stage {stage_scale_ms:5.2f} enc {encode_ms:5.2f} dec {decode_ms:5.2f}  "
-            f"runner {runner_model_total_ms:6.2f}  recover {recovery_ms:6.2f}  "
-            f"overall {overall_wall_ms:7.2f} ms | "
+            f"runner {runner_model_total_ms:6.2f}  temporal {temporal_filter_ms:5.2f}  "
+            f"recover {recovery_ms:6.2f}  overall {overall_wall_ms:7.2f} ms | "
             f"scale {estimator.runner.spatial_scale:5.2f} | "
             f"anchor EPE {anchor_flow_epe.mean():.5f}  first EPE {first_flow_epe.mean():.5f} m"
         )
@@ -384,6 +456,7 @@ def run(config: dict) -> None:
                 target_frame=prepared,
                 estimate=estimate,
                 recovery=recovery,
+                anchor_flow_override=filtered_anchor_flow,
                 anchor_gt_flow=anchor_gt_flow,
                 first_gt_flow=first_gt_flow,
             )
@@ -435,6 +508,7 @@ def run(config: dict) -> None:
         ("runner_decode_ms", "Runner decode"),
         ("runner_profiled_ms", "Runner profiled sum"),
         ("runner_model_total_ms", "Runner preprocess + DifFlow"),
+        ("temporal_filter_ms", f"Temporal motion ({temporal_estimator.mode_name})"),
         ("recovery_ms", "Dense recovery"),
         ("overall_wall_ms", "Online overall"),
     ):
@@ -447,6 +521,8 @@ def run(config: dict) -> None:
     print(f"First flow EPE mean/median/P95:  {first_flow_all.mean():.6f} / {np.median(first_flow_all):.6f} / {np.percentile(first_flow_all,95):.6f} m")
     print(f"Anchor velocity EPE mean/P95:    {anchor_vel_all.mean():.6f} / {np.percentile(anchor_vel_all,95):.6f} m/s")
     print(f"First velocity EPE mean/P95:     {first_vel_all.mean():.6f} / {np.percentile(first_vel_all,95):.6f} m/s")
+    print(f"Temporal mode:                    {temporal_estimator.mode_name}")
+    print(f"Temporal supported ratio mean:    {safe_mean(np.asarray(temporal_supported_ratios, dtype=np.float64)):.6f}")
     print(f"Deadline miss ratio:              {np.mean(overall_array > period_ms):.3f}")
     print(f"Sustainable Hz from median:       {1000.0 / np.median(overall_array):.2f}")
 
@@ -469,6 +545,11 @@ def run(config: dict) -> None:
             "recovery_local_radius_sigma": float(args.recovery_local_radius_sigma),
             "recovery_local_hash_size_factor": float(args.recovery_local_hash_size_factor),
             "recovery_report_local_stats": bool(args.recovery_report_local_stats),
+            "temporal_motion": {
+                "mode": temporal_estimator.mode_name,
+                "kalman_enabled": bool(temporal_estimator.kf_enabled),
+                "supported_ratio_mean": safe_mean(np.asarray(temporal_supported_ratios, dtype=np.float64)),
+            },
             "target_model_volume": float(args.target_model_volume),
             "calibration": calibration,
             "spatial_scale": estimator.runner.spatial_scale,

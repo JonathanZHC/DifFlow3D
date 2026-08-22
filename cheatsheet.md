@@ -1,16 +1,35 @@
 # DifFlow3D deployment cheatsheet
 
-## Build
+## Docker build
 
 ```bash
-cd /workspace
-bash scripts/build_pointnet2_ops.sh
+bash scripts/docker_build.sh
 ```
 
-## Main benchmark
+## Run benchmark / simulation
 
 ```bash
-python3 scripts/test_voxel_difflow.py --config configs/config.yaml
+bash scripts/run_simulation.sh
+```
+
+## Run simulation with RViz publishing
+
+Terminal 1:
+
+```bash
+bash scripts/run_simulation.sh --rviz --realtime --rviz-hold-seconds -1
+```
+
+Terminal 2:
+
+```bash
+bash scripts/run_rviz.sh
+```
+
+## Rebuild native CUDA extension manually
+
+```bash
+bash scripts/build_pointnet2_ops.sh
 ```
 
 ## Recovery kernel validation
@@ -22,6 +41,12 @@ python3 scripts/test_runtime_ops.py \
   --queries 96000 \
   --sigma 0.025 \
   --radius-sigma 4
+```
+
+## Velocity-KF / temporal CUDA validation
+
+```bash
+python3 scripts/test_anchor_motion_ops.py
 ```
 
 ## Recovery sweep
@@ -58,9 +83,18 @@ recovery:
   local_radius_sigma: 4.0
   local_hash_size_factor: 4.0
 
+motion_estimation:
+  kalman:
+    enabled: true
+    process_velocity_std_mps: 0.15
+    measurement_noise_std_mps: 0.10
+    initial_velocity_std_mps: 0.30
+
 rviz:
   enabled: false
 ```
+
+KF state transport reuses the spatial neighborhood parameters under `recovery`; no separate transport parameters are configured.
 
 ## Recovery backends
 

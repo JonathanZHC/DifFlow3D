@@ -7,6 +7,11 @@ from .preprocessing import (
 from .recovery import SoftmaxAnchorMotionRecoverer, DenseMotionRecovery
 from .inference import DifFlow3DConfig, DifFlow3DInference, DifFlow3DEstimate
 from .checkpoint import CheckpointReport, load_checkpoint
+from .motion import (
+    AnchorTransportResult,
+    KalmanResult,
+    CudaAnchorTemporalOps,
+)
 
 __all__ = [
     "DifFlow3DStreamingCudaGraphRunner",
@@ -21,4 +26,7 @@ __all__ = [
     "DifFlow3DEstimate",
     "CheckpointReport",
     "load_checkpoint",
+    "AnchorTransportResult",
+    "KalmanResult",
+    "CudaAnchorTemporalOps",
 ]

@@ -27,7 +27,7 @@ python3 setup.py build_ext --inplace
 
 # Verify the extension from THIS checkout, not a stale /opt or site-packages copy.
 cd "${REPO_ROOT}"
-PYTHONPATH="${REPO_ROOT}:${OPS_DIR}" python3 - <<'PY'
+PYTHONPATH="${REPO_ROOT}" python3 - <<'PY'
 from pathlib import Path
 from difflow3d.ops.pointnet2 import pointnet2_utils
 
@@ -36,6 +36,8 @@ required = (
     'gaussian_recovery_hash_build_wrapper',
     'gaussian_softmax_recovery_local_wrapper',
     'gaussian_softmax_recovery_local_track_aware_wrapper',
+    'gaussian_softmax_transport_local_track_aware_wrapper',
+    'anchor_kalman_update_wrapper',
 )
 
 loaded = Path(pointnet2_utils.extension_path()).resolve()
@@ -48,5 +50,5 @@ if loaded.parent != expected_dir:
 missing = [name for name in required if not hasattr(pointnet2_utils.pointnet2, name)]
 if missing:
     raise RuntimeError(f'Missing recovery CUDA symbols after rebuild: {missing}')
-print('PointNet2 + dense-recovery CUDA extension build OK')
+print('PointNet2 + recovery/velocity-KF CUDA extension build OK')
 PY

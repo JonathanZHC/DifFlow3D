@@ -19,6 +19,8 @@ sources = [
     'src/sampling_gpu.cu',
     'src/gaussian_recovery.cpp',
     'src/gaussian_recovery_gpu.cu',
+    'src/anchor_motion.cpp',
+    'src/anchor_motion_gpu.cu',
 ]
 
 setup(

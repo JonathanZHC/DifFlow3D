@@ -19,7 +19,7 @@ model:
 
 preprocessing:
   # Fixed CUDA-Graph/model input count. Must be >= 1024.
-  fps_points: 2048
+  fps_points: 8192
   # Adaptive voxel-2 targets ceil(ratio * fps_points) candidates.
   second_candidate_ratio: 1.1
   # fps | uniform. Uniform is the measured-fast deployment default.
@@ -28,6 +28,18 @@ preprocessing:
   auto_spatial_scale: true
   target_model_volume: 2.0       # used when auto_spatial_scale=true
   fixed_spatial_scale: 1.0       # used when auto_spatial_scale=false
+
+motion_estimation:
+  # false -> raw DifFlow velocity (flow / dt); true -> velocity-only KF.
+  # The filter state is [vx, vy, vz] with a random-walk velocity prior.
+  kalman:
+    enabled: true
+    # Per-update velocity process-noise std: Q_v = std^2 * I.
+    process_velocity_std_mps: 0.15
+    measurement_noise_std_mps: 0.10
+    initial_velocity_std_mps: 0.30
+    min_innovation_variance: 1.0e-6
+
 
 recovery:
   # Real/world metric bandwidth in metres; never canonicalized.
@@ -100,9 +112,8 @@ superquadrics_benchmark:
   realtime: false
 
 rviz:
-  # Keep off for performance measurements.
-  enabled: false
-  config: rviz/voxel_difflow.rviz
+  # Keep off for performance measurements. Enable with --rviz when visualizing.
+  enabled: true
   frame_id: world
   max_arrows: 1024
   vector_scale: 10.0

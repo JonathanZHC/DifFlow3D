@@ -1,22 +1,13 @@
 from pathlib import Path
 import math
-import sys
 
 import torch
 from torch.autograd import Function
 import torch.nn as nn
 
-# Prefer the extension built next to this source tree.  This is important when
-# a development checkout is mounted at /workspace while the Docker image still
-# contains an older extension under /opt/DifFlow3D.  Without this, Python can
-# silently mix /workspace Python sources with a stale /opt pointnet2_cuda .so.
-_OPS_DIR = Path(__file__).resolve().parent
-_ops_dir_string = str(_OPS_DIR)
-if _ops_dir_string in sys.path:
-    sys.path.remove(_ops_dir_string)
-sys.path.insert(0, _ops_dir_string)
-
-import pointnet2_cuda as pointnet2
+# Import the in-package extension explicitly so a mounted development checkout
+# cannot accidentally load a stale top-level pointnet2_cuda from another path.
+from . import pointnet2_cuda as pointnet2
 
 
 def extension_path() -> str:
@@ -326,6 +317,17 @@ def has_gaussian_softmax_recovery_local_track_aware() -> bool:
         has_gaussian_softmax_recovery_local()
         and hasattr(pointnet2, "gaussian_softmax_recovery_local_track_aware_wrapper")
     )
+
+
+def has_gaussian_softmax_transport_local_track_aware() -> bool:
+    return (
+        hasattr(pointnet2, "gaussian_recovery_hash_build_wrapper")
+        and hasattr(pointnet2, "gaussian_softmax_transport_local_track_aware_wrapper")
+    )
+
+
+def has_anchor_velocity_kalman_op() -> bool:
+    return hasattr(pointnet2, "anchor_kalman_update_wrapper")
 
 
 def _validate_gaussian_inputs(

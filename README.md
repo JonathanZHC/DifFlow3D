@@ -18,17 +18,64 @@ DifFlow3D/
 │   ├── ops/pointnet2/         # PointNet++ and recovery CUDA extension
 │   └── testing/               # synthetic benchmark/metrics/RViz helpers
 ├── scripts/
+│   ├── docker_build.sh         # build difflow3d:latest
+│   ├── run_simulation.sh       # create/reuse dev container + run benchmark
+│   ├── run_rviz.sh             # launch RViz in the same container
+│   ├── build_pointnet2_ops.sh  # rebuild native CUDA extension
 │   ├── test_voxel_difflow.py
+│   ├── test_anchor_motion_ops.py
 │   ├── test_superquadrics.py
 │   ├── test_runtime_ops.py
 │   ├── benchmark_optimizations.py
-│   ├── benchmark_recovery.py
-│   └── build_pointnet2_ops.sh
+│   └── benchmark_recovery.py
 ├── configs/config.yaml
 ├── rviz/voxel_difflow.rviz
 ├── checkpoints/
 └── Dockerfile
 ```
+
+
+## Docker quick start
+
+The host-side helper scripts keep the development checkout mounted at `/workspace`, so source/config changes are visible without rebuilding the Docker image. The native PointNet2 extension is rebuilt by `run_simulation.sh` only when it is missing or older than its C++/CUDA sources.
+
+Build the image once:
+
+```bash
+bash scripts/docker_build.sh
+```
+
+Run the configured benchmark/simulation:
+
+```bash
+bash scripts/run_simulation.sh
+```
+
+For live visualization, use two host terminals. The first command enables the benchmark publisher, runs at sensor rate, and keeps the ROS publisher alive until `Ctrl+C`:
+
+```bash
+# terminal 1
+bash scripts/run_simulation.sh --rviz --realtime --rviz-hold-seconds -1
+
+# terminal 2
+bash scripts/run_rviz.sh
+```
+
+For timing-only runs, keep RViz and real-time pacing disabled:
+
+```bash
+bash scripts/run_simulation.sh --no-rviz --no-realtime
+```
+
+The scripts reuse a container named `difflow3d`. Remove it when you want a fresh container:
+
+```bash
+docker rm -f difflow3d
+```
+
+Optional environment overrides are `DIFFLOW_IMAGE` (default `difflow3d:latest`), `DIFFLOW_CONTAINER` (default `difflow3d`), `DIFFLOW_CONFIG` (default `configs/config.yaml`), and `DIFFLOW_RVIZ_CONFIG` (default `rviz/voxel_difflow.rviz`).
+
+If RViz cannot connect to the display, verify that `DISPLAY` is set on the host and that X11/Xwayland allows the current local user.
 
 ## Production pipeline
 
@@ -41,6 +88,7 @@ raw world cloud
   -> encode each frame once
   -> CUDA-Graph pair decode
   -> world-space sparse flow
+  -> optional velocity-only KF + track-aware state transport
   -> dense Gaussian recovery
 ```
 
@@ -66,9 +114,18 @@ recovery:
   local_radius_sigma: 4.0
   local_hash_size_factor: 4.0
 
+motion_estimation:
+  kalman:
+    enabled: true
+    process_velocity_std_mps: 0.15
+    measurement_noise_std_mps: 0.10
+    initial_velocity_std_mps: 0.30
+
 rviz:
   enabled: false
 ```
+
+The KF state-transport neighborhood reuses `recovery.softmax_sigma_m`, `recovery.local_radius_sigma`, and `recovery.local_hash_size_factor`; there is no separate transport-tuning block.
 
 The Euclidean KNN path is fixed to the PyTorch GEMM + `topk` implementation because it measured faster than the experimental custom KNN kernel on the target RTX 5090. Neural inference is FP32 with TF32 enabled; the slower BF16 experiment is not part of the deployment API.
 
@@ -126,6 +183,32 @@ model:
 
 A scalar is still accepted and maps to the same count at all three levels. Iteration count changes execution only; checkpoint parameters are unchanged.
 
+## Velocity-only temporal Kalman filter
+
+The optional temporal filter stays entirely in the velocity domain. Its state is `[vx, vy, vz]` with diagonal covariance and the random-walk model
+
+\[
+v_k = v_{k-1} + w_k, \qquad w_k \sim \mathcal N(0,Q_v).
+\]
+
+There is no acceleration state, acceleration measurement, or velocity-to-acceleration finite difference. The current DifFlow displacement is converted once to the velocity measurement `z_k = flow_k / dt`. With `kalman.enabled=false`, the temporal stage is bypassed and the raw velocity is used unchanged.
+
+```yaml
+motion_estimation:
+  kalman:
+    enabled: true
+    process_velocity_std_mps: 0.15
+    measurement_noise_std_mps: 0.10
+    initial_velocity_std_mps: 0.30
+    min_innovation_variance: 1.0e-6
+
+# KF state transport reuses recovery.softmax_sigma_m,
+# recovery.local_radius_sigma, and recovery.local_hash_size_factor.
+
+```
+
+The track-aware CUDA transport moves the previous filtered state to the current anchor set. It transports first/second Gaussian moments so local velocity variation is reflected in the transported covariance. Every finite DifFlow velocity measurement is fused by the standard Kalman update. No legacy constant-acceleration mode or second-order motion parameters are part of the deployment configuration.
+
 ## Dense recovery
 
 The exact global reference is:
@@ -177,12 +260,19 @@ This compares exact CUDA recovery against the PyTorch reference and reports loca
 
 ## Main benchmark
 
+From the host, the recommended entry point is:
+
 ```bash
-python3 scripts/test_voxel_difflow.py \
-  --config configs/config.yaml
+bash scripts/run_simulation.sh
 ```
 
-With detailed profiling enabled, the benchmark reports first voxel, voxel-2, final selection, scale/staging, encode, decode, dense recovery, and overall latency.
+Inside an already-running container, the direct command is still available:
+
+```bash
+python3 scripts/test_voxel_difflow.py --config configs/config.yaml
+```
+
+With detailed profiling enabled, the benchmark reports first voxel, voxel-2, final selection, scale/staging, encode, decode, velocity-KF filtering (when enabled), dense recovery, and overall latency.
 
 For absolute deployment timing, use:
 

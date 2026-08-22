@@ -48,6 +48,33 @@ void gaussian_softmax_recovery_local_track_aware_wrapper(
     at::Tensor output_flow,
     at::Tensor local_neighbor_counts);
 
+void gaussian_softmax_transport_local_track_aware_wrapper(
+    at::Tensor queries,
+    at::Tensor anchors,
+    at::Tensor anchor_values,
+    at::Tensor query_track_ids,
+    at::Tensor anchor_track_ids,
+    double sigma,
+    double radius,
+    double cell_size,
+    bool global_same_track_fallback,
+    at::Tensor hash_heads,
+    at::Tensor anchor_next,
+    at::Tensor anchor_cells,
+    at::Tensor output_values,
+    at::Tensor support_counts);
+
+void anchor_kalman_update_wrapper(
+    at::Tensor current_flow,
+    at::Tensor transported_previous_state6,
+    at::Tensor support_counts,
+    double dt,
+    double process_velocity_variance,
+    double measurement_variance,
+    double initial_velocity_variance,
+    double min_innovation_variance,
+    at::Tensor output_state6);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("ball_query_wrapper", &ball_query_wrapper_fast, "ball_query_wrapper_fast");
 
@@ -79,4 +106,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "gaussian_softmax_recovery_local_track_aware_wrapper",
         &gaussian_softmax_recovery_local_track_aware_wrapper,
         "Track-aware radius-local hash-grid Gaussian-softmax recovery");
+    m.def(
+        "gaussian_softmax_transport_local_track_aware_wrapper",
+        &gaussian_softmax_transport_local_track_aware_wrapper,
+        "Strict same-track local Gaussian transport for temporal anchor state");
+    m.def(
+        "anchor_kalman_update_wrapper",
+        &anchor_kalman_update_wrapper,
+        "Fused velocity-only anchor Kalman update");
 }
