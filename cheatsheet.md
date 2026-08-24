@@ -76,10 +76,7 @@ preprocessing:
   final_selection: uniform
   outlier_filter:
     enabled: true
-    tiny_component_max_voxels: 2
-    max_small_component_fraction: 0.005
-    support_radius_voxels: 1
-    min_supported_fraction: 0.30
+    min_component_size_ratio: 0.05
   auto_spatial_scale:
     enable: true
     target_model_volume: 2.0

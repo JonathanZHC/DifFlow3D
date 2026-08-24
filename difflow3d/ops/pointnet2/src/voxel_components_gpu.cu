@@ -301,9 +301,6 @@ void voxel_component_filter_kernel_launcher(
     cudaStream_t stream) {
     const int blocks = DIVUP(count, THREADS_PER_BLOCK);
     cudaMemsetAsync(component_sizes, 0, count * sizeof(int), stream);
-    cudaMemsetAsync(supported_counts, 0, count * sizeof(int), stream);
-    cudaMemsetAsync(largest_component_size, 0, sizeof(int), stream);
-    cudaMemsetAsync(statistics, 0, 11 * sizeof(int), stream);
 
     initialize_parents_kernel<<<blocks, THREADS_PER_BLOCK, 0, stream>>>(
         count, parents);
@@ -311,6 +308,21 @@ void voxel_component_filter_kernel_launcher(
         count, sorted_keys, shifted_coords, extents, parents);
     compress_and_count_kernel<<<blocks, THREADS_PER_BLOCK, 0, stream>>>(
         count, parents, component_sizes);
+
+    // The adaptive distribution filter only needs component labels and sizes.
+    // Skip the legacy temporal/classification work in this labels-only mode.
+    const bool labels_only =
+        previous_count == 0 && tiny_component_max_voxels == 0 &&
+        max_small_component_voxels == 0 && support_radius_voxels == 0 &&
+        min_supported_fraction == 0.0f;
+    if (labels_only) {
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
+        return;
+    }
+
+    cudaMemsetAsync(supported_counts, 0, count * sizeof(int), stream);
+    cudaMemsetAsync(largest_component_size, 0, sizeof(int), stream);
+    cudaMemsetAsync(statistics, 0, 11 * sizeof(int), stream);
     component_summary_kernel<<<blocks, THREADS_PER_BLOCK, 0, stream>>>(
         count, parents, component_sizes, largest_component_size, statistics);
     if (previous_count > 0 &&

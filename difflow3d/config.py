@@ -134,17 +134,8 @@ def voxel_namespace(config: dict) -> SimpleNamespace:
         keep_bn_running_stats=not bool(model["disable_bn_running_stats"]),
         second_candidate_ratio=float(prep["second_candidate_ratio"]),
         outlier_filter_enabled=bool(outlier.get("enabled", False)),
-        outlier_filter_tiny_component_max_voxels=int(
-            outlier.get("tiny_component_max_voxels", 2)
-        ),
-        outlier_filter_max_small_component_fraction=float(
-            outlier.get("max_small_component_fraction", 0.005)
-        ),
-        outlier_filter_support_radius_voxels=int(
-            outlier.get("support_radius_voxels", 1)
-        ),
-        outlier_filter_min_supported_fraction=float(
-            outlier.get("min_supported_fraction", 0.3)
+        outlier_filter_min_component_size_ratio=float(
+            outlier.get("min_component_size_ratio", 0.05)
         ),
         auto_spatial_scale=bool(spatial_scale["enable"]),
         fixed_spatial_scale=float(spatial_scale["fixed_spatial_scale"]),

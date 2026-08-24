@@ -29,6 +29,7 @@ class PreparedModelInput:
     world_points: torch.Tensor
     selection_indices: torch.Tensor
     point_ids: torch.Tensor | None
+    input_keep_mask: torch.Tensor
     info: dict[str, object]
     timing_events: PreprocessTimingEvents | None = None
 
@@ -68,10 +69,7 @@ class AdaptivePointPreprocessor:
         volume_epsilon: float = 1.0e-12,
         final_selection: str = "fps",
         outlier_filter_enabled: bool = False,
-        outlier_filter_tiny_component_max_voxels: int = 2,
-        outlier_filter_max_small_component_fraction: float = 0.005,
-        outlier_filter_support_radius_voxels: int = 1,
-        outlier_filter_min_supported_fraction: float = 0.3,
+        outlier_filter_min_component_size_ratio: float = 0.05,
         enable_timing: bool = False,
         validate_finite: bool = False,
     ) -> None:
@@ -112,18 +110,7 @@ class AdaptivePointPreprocessor:
                 "run: bash scripts/build_pointnet2_ops.sh"
             )
         self._outlier_filter = CudaVoxelComponentOutlierFilter(
-            tiny_component_max_voxels=(
-                outlier_filter_tiny_component_max_voxels
-            ),
-            max_small_component_fraction=(
-                outlier_filter_max_small_component_fraction
-            ),
-            support_radius_voxels=(
-                outlier_filter_support_radius_voxels
-            ),
-            min_supported_fraction=(
-                outlier_filter_min_supported_fraction
-            ),
+            min_component_size_ratio=outlier_filter_min_component_size_ratio,
         )
         self.enable_timing = bool(enable_timing)
         self.validate_finite = bool(validate_finite)
@@ -178,10 +165,6 @@ class AdaptivePointPreprocessor:
         self.second_voxel_size_m = None
         self._second_calibration = None
         self.reset_spatial_scale()
-        self.reset_temporal_history()
-
-    def reset_temporal_history(self) -> None:
-        self._outlier_filter.reset_history()
 
     @staticmethod
     def _validate_points(
@@ -231,7 +214,10 @@ class AdaptivePointPreprocessor:
     def _voxel_downsample(
         points: torch.Tensor,
         voxel_size: float,
+        point_ids: torch.Tensor | None = None,
     ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
@@ -240,23 +226,53 @@ class AdaptivePointPreprocessor:
         torch.Tensor,
     ]:
         coordinates = torch.floor(points / float(voxel_size)).to(torch.int64)
-        shifted = coordinates - coordinates.amin(dim=0)
-        extents = shifted.amax(dim=0) + 1
+        spatial_shifted = coordinates - coordinates.amin(dim=0)
+        spatial_extents = spatial_shifted.amax(dim=0) + 1
+        voxel_ids = (
+            point_ids.to(torch.int64)
+            if point_ids is not None
+            else torch.full(
+                (points.shape[0],),
+                -1,
+                device=points.device,
+                dtype=torch.int64,
+            )
+        )
+        _, track_ranks = torch.unique(
+            voxel_ids,
+            sorted=True,
+            return_inverse=True,
+        )
+
+        # Separate tracks by two empty x slices. The unchanged 3-D CUDA
+        # component operator can then label each instance independently while
+        # still using one launch for the complete scene.
+        component_coords = spatial_shifted.clone()
+        track_stride = spatial_extents[0] + 2
+        component_coords[:, 0] += track_ranks * track_stride
+        component_extents = component_coords.amax(dim=0) + 1
         keys = (
-            shifted[:, 0] * (extents[1] * extents[2])
-            + shifted[:, 1] * extents[2]
-            + shifted[:, 2]
+            component_coords[:, 0]
+            * (component_extents[1] * component_extents[2])
+            + component_coords[:, 1] * component_extents[2]
+            + component_coords[:, 2]
         )
         sorted_keys, order = torch.sort(keys)
         keep = torch.ones_like(sorted_keys, dtype=torch.bool)
         keep[1:] = sorted_keys[1:] != sorted_keys[:-1]
         indices = order[keep]
+        sorted_group_ids = torch.cumsum(keep.to(torch.int64), dim=0) - 1
+        input_to_candidate = torch.empty_like(order)
+        input_to_candidate.scatter_(0, order, sorted_group_ids)
         unique_keys = sorted_keys[keep].contiguous()
         candidate_coords = (
-            shifted.index_select(0, indices).to(torch.int32).contiguous()
+            component_coords.index_select(0, indices).to(torch.int32).contiguous()
         )
         absolute_coords = (
             coordinates.index_select(0, indices).to(torch.int32).contiguous()
+        )
+        candidate_track_ranks = (
+            track_ranks.index_select(0, indices).to(torch.int32).contiguous()
         )
         return (
             points.index_select(0, indices).contiguous(),
@@ -264,12 +280,15 @@ class AdaptivePointPreprocessor:
             candidate_coords,
             absolute_coords,
             unique_keys,
-            extents.to(torch.int32).contiguous(),
+            component_extents.to(torch.int32).contiguous(),
+            input_to_candidate.contiguous(),
+            candidate_track_ranks,
         )
 
     def _calibrate_second_voxel(
         self,
         points: torch.Tensor,
+        point_ids: torch.Tensor | None = None,
     ) -> dict[str, object]:
         """One-shot untimed voxel-2 resolution search."""
         count = int(points.shape[0])
@@ -307,8 +326,8 @@ class AdaptivePointPreprocessor:
         trials: list[dict[str, float | int]] = []
 
         for _ in range(self._second_auto_iterations):
-            candidate_points, _, _, _, _, _ = self._voxel_downsample(
-                points, resolution
+            candidate_points, _, _, _, _, _, _, _ = self._voxel_downsample(
+                points, resolution, point_ids
             )
             candidate_count = int(candidate_points.shape[0])
             trials.append(
@@ -368,10 +387,13 @@ class AdaptivePointPreprocessor:
     def _second_downsample(
         self,
         points: torch.Tensor,
+        point_ids: torch.Tensor | None,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
         bool,
+        torch.Tensor | None,
+        torch.Tensor | None,
         torch.Tensor | None,
         torch.Tensor | None,
         torch.Tensor | None,
@@ -382,18 +404,31 @@ class AdaptivePointPreprocessor:
             identity = torch.arange(
                 count, device=points.device, dtype=torch.long
             )
-            return points, identity, False, None, None, None, None
+            return points, identity, False, None, None, None, None, None, None
 
         if self.second_voxel_size_m is None:
-            self._calibrate_second_voxel(points)
+            self._calibrate_second_voxel(points, point_ids)
         if self.second_voxel_size_m is None:
             identity = torch.arange(
                 count, device=points.device, dtype=torch.long
             )
-            return points, identity, False, None, None, None, None
+            return points, identity, False, None, None, None, None, None, None
 
-        candidates, indices, coords, absolute_coords, keys, extents = (
-            self._voxel_downsample(points, self.second_voxel_size_m)
+        (
+            candidates,
+            indices,
+            coords,
+            absolute_coords,
+            keys,
+            extents,
+            input_to_candidate,
+            candidate_track_ranks,
+        ) = (
+            self._voxel_downsample(
+                points,
+                self.second_voxel_size_m,
+                point_ids,
+            )
         )
         return (
             candidates,
@@ -403,6 +438,8 @@ class AdaptivePointPreprocessor:
             absolute_coords,
             keys,
             extents,
+            input_to_candidate,
+            candidate_track_ranks,
         )
 
     def _repeat(
@@ -539,6 +576,9 @@ class AdaptivePointPreprocessor:
             "outlier_filter_removed_count": 0,
         }
         candidate_count_before_filter = n1
+        input_keep_mask = torch.ones(
+            n1, device=frame.device, dtype=torch.bool
+        )
 
         timing_events: PreprocessTimingEvents | None = None
         if self.enable_timing:
@@ -598,7 +638,9 @@ class AdaptivePointPreprocessor:
                 candidate_absolute_coords,
                 candidate_keys,
                 voxel_extents,
-            ) = self._second_downsample(frame)
+                input_to_candidate,
+                candidate_track_ranks,
+            ) = self._second_downsample(frame, point_ids)
             if event_after_voxel2 is not None:
                 event_after_voxel2.record()
             candidate_count_before_filter = int(candidates.shape[0])
@@ -612,15 +654,26 @@ class AdaptivePointPreprocessor:
                 assert candidate_absolute_coords is not None
                 assert candidate_keys is not None
                 assert voxel_extents is not None
-                candidates, retained_indices, component_info = (
+                assert input_to_candidate is not None
+                assert candidate_track_ranks is not None
+                (
+                    candidates,
+                    retained_indices,
+                    candidate_keep,
+                    component_info,
+                ) = (
                     self._outlier_filter.filter(
                         candidates,
                         candidate_coords,
                         candidate_absolute_coords,
                         candidate_keys,
                         voxel_extents,
+                        candidate_track_ranks,
                     )
                 )
+                input_keep_mask = candidate_keep.index_select(
+                    0, input_to_candidate
+                ).contiguous()
                 candidate_indices = candidate_indices.index_select(
                     0, retained_indices
                 ).contiguous()
@@ -646,13 +699,6 @@ class AdaptivePointPreprocessor:
                 anchors, local_indices = self._select_exact_count(candidates)
                 unique_count = self.num_points
                 selection_mode = f"voxel2-{self.final_selection}"
-
-        if self.outlier_filter_enabled and not bool(
-            filter_info["outlier_filter_applied"]
-        ):
-            # The next temporal comparison must never use a history older than
-            # one frame when voxel-2 was bypassed for this frame.
-            self.reset_temporal_history()
 
         if event_after_exact is not None:
             event_after_exact.record()
@@ -714,6 +760,7 @@ class AdaptivePointPreprocessor:
             anchors,
             final_indices,
             anchor_ids,
+            input_keep_mask,
             info,
             timing_events,
         )
@@ -750,6 +797,4 @@ class AdaptivePointPreprocessor:
             "spatial": self.spatial_calibration,
             "anchor_info": prepared.info,
         }
-        # Calibration is not part of the live temporal sequence.
-        self.reset_temporal_history()
         return result

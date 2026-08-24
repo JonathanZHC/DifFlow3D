@@ -29,13 +29,9 @@ preprocessing:
   # after adaptive voxel-2 and before exact-count selection/FPS.
   outlier_filter:
     enabled: true
-    # Largest block(s) always stay; non-largest blocks <= H are removed.
-    tiny_component_max_voxels: 2
-    # For H < size <= max(H, ceil(fraction * N)), require temporal support.
-    max_small_component_fraction: 0.05
-    # A voxel is supported within this Chebyshev radius in the previous frame.
-    support_radius_voxels: 1
-    min_supported_fraction: 0.30
+    # Per instance: keep size > largest_block_size * this ratio.
+    # Valid range [0, 1); larger values are stricter.
+    min_component_size_ratio: 0.05
 
   auto_spatial_scale:
     enable: true

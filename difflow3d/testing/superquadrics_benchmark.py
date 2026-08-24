@@ -102,17 +102,8 @@ def run(config: dict) -> None:
         ),
         final_selection=str(prep_cfg.get("final_selection", "fps")),
         outlier_filter_enabled=bool(outlier_cfg.get("enabled", False)),
-        outlier_filter_tiny_component_max_voxels=int(
-            outlier_cfg.get("tiny_component_max_voxels", 2)
-        ),
-        outlier_filter_max_small_component_fraction=float(
-            outlier_cfg.get("max_small_component_fraction", 0.005)
-        ),
-        outlier_filter_support_radius_voxels=int(
-            outlier_cfg.get("support_radius_voxels", 1)
-        ),
-        outlier_filter_min_supported_fraction=float(
-            outlier_cfg.get("min_supported_fraction", 0.3)
+        outlier_filter_min_component_size_ratio=float(
+            outlier_cfg.get("min_component_size_ratio", 0.05)
         ),
         enable_profiling=bool(
             config.get("profiling", {}).get("detailed_runtime_breakdown", False)
@@ -137,11 +128,8 @@ def run(config: dict) -> None:
     print(f"Outlier filter:         {bool(outlier_cfg.get('enabled', False))}")
     if bool(outlier_cfg.get("enabled", False)):
         print(
-            "Outlier H/fraction/r/tau: "
-            f"{int(outlier_cfg.get('tiny_component_max_voxels', 2))} / "
-            f"{float(outlier_cfg.get('max_small_component_fraction', 0.005)):.6f} / "
-            f"{int(outlier_cfg.get('support_radius_voxels', 1))} / "
-            f"{float(outlier_cfg.get('min_supported_fraction', 0.3)):.3f}"
+            "Outlier minimum component/max ratio: "
+            f"{float(outlier_cfg.get('min_component_size_ratio', 0.05)):.4f}"
         )
     print(
         "Iterations C/M/F:       "
@@ -187,9 +175,9 @@ def run(config: dict) -> None:
                 print(
                     f"frame {index:03d} outlier: "
                     f"blocks={int(stats['component_count'])}, "
-                    f"tiny_removed={int(stats['tiny_removed_component_count'])}, "
-                    f"temporal_candidates={int(stats['temporal_candidate_component_count'])}, "
-                    f"temporal_rejected={int(stats['temporal_rejected_component_count'])}, "
+                    f"retained={int(stats['retained_component_count'])}, "
+                    "instances_with_removals="
+                    f"{int(stats['instances_with_removed_components'])}, "
                     f"removed_voxels={int(stats['removed_voxel_count'])}"
                 )
             else:

@@ -108,10 +108,7 @@ preprocessing:
   final_selection: uniform
   outlier_filter:
     enabled: true
-    tiny_component_max_voxels: 2
-    max_small_component_fraction: 0.005
-    support_radius_voxels: 1
-    min_supported_fraction: 0.30
+    min_component_size_ratio: 0.05
   auto_spatial_scale:
     enable: true
     target_model_volume: 2.0
@@ -158,45 +155,30 @@ N1 > C       -> adaptive voxel-2
 Voxel-2 resolution is calibrated once and then frozen. Spatial scale is also calibrated once and frozen until the preprocessing calibration is explicitly reset.
 
 The optional outlier filter operates after voxel-2 and before exact-count
-selection/FPS. It uses the following rule. Let `N` be the current number of
-unique voxel-2 representatives, `H = tiny_component_max_voxels`, and
+selection/FPS. Components are built with 26-neighbor connectivity independently
+for every supplied track ID. If IDs are unavailable, the complete cloud is one
+virtual object with ID `-1`.
 
-\[
-S = \max\left(H,\left\lceil
-\texttt{max\_small\_component\_fraction}\,N
-\right\rceil\right).
-\]
+For every instance, let `S_max` be its largest component size. A component of
+size `S` is retained exactly when:
 
-The current voxels are split into sparse 26-neighbor connected components. All
-components tied for largest are retained. Every other component of size `s` is
-classified as follows:
+`S > S_max * min_component_size_ratio`
 
-1. `s <= H`: remove immediately.
-2. `H < s <= S`: retain only when its previous-frame supported-voxel fraction
-   is at least `min_supported_fraction`.
-3. `s > S`: retain.
+All other components are rejected. The largest component is therefore always
+retained for every valid ratio in `[0, 1)`, while any number of other components
+may also remain. All component sizes participate directly; there is no prior
+tiny-block removal. The returned input keep mask also removes every dense point
+represented by a rejected voxel from recovery.
 
-A current voxel is temporally supported when the unfiltered previous-frame
-voxel set contains at least one voxel within Chebyshev distance
-`support_radius_voxels`. Thus a value of `1` checks the surrounding 3 x 3 x 3
-voxel neighborhood and tolerates one-voxel motion or quantization jitter. On the
-first frame, temporal evidence is unavailable: medium components are retained,
-while the tiny-component rule still applies. History always contains only the
-immediately preceding unfiltered voxel-2 observations and is cleared when a
-frame bypasses voxel-2 or the streaming runner is reset.
+There is no hard tiny-block threshold, fixed block-count cap, distance rule, or
+temporal state. The CUDA path uses connected-component labeling followed by
+`O(N)` max-reduction and comparison; it does not sort blocks or create
+candidate-pair matrices.
 
-The preprocessing API does not receive track IDs, so the implementation treats
-the complete cloud as one virtual object. Temporal matching uses absolute
-world-space voxel coordinates; upstream world-frame alignment is therefore
-preserved naturally. Multiple large occlusion-separated blocks remain valid
-because every largest component and every component above `S` is retained.
-
-When enabled, the benchmarks print the component count, largest block size,
-tiny blocks removed, temporal candidates, supported/rejected candidates,
-removed blocks/voxels, temporal support fraction, and filter time. CUDA writes
-these statistics to a fixed-size buffer; it is read only after an already
-required benchmark synchronization, so reporting does not add a synchronization
-to the measured filter path.
+When enabled, the benchmarks print instance/component counts, retained blocks,
+instances with removals, removed blocks/voxels, and filter time. CUDA writes
+statistics to a fixed-size buffer that is read only after an already required
+synchronization.
 
 The existing repeat path handles a retained count below `K`; the filter has no
 separate point-count fallback.

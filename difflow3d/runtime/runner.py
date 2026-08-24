@@ -53,10 +53,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         volume_epsilon: float = 1.0e-12,
         final_selection: str = "fps",
         outlier_filter_enabled: bool = False,
-        outlier_filter_tiny_component_max_voxels: int = 2,
-        outlier_filter_max_small_component_fraction: float = 0.005,
-        outlier_filter_support_radius_voxels: int = 1,
-        outlier_filter_min_supported_fraction: float = 0.3,
+        outlier_filter_min_component_size_ratio: float = 0.05,
         enable_profiling: bool = False,
         validate_finite: bool = False,
     ) -> None:
@@ -125,17 +122,8 @@ class DifFlow3DStreamingCudaGraphRunner:
             volume_epsilon=volume_epsilon,
             final_selection=final_selection,
             outlier_filter_enabled=outlier_filter_enabled,
-            outlier_filter_tiny_component_max_voxels=(
-                outlier_filter_tiny_component_max_voxels
-            ),
-            outlier_filter_max_small_component_fraction=(
-                outlier_filter_max_small_component_fraction
-            ),
-            outlier_filter_support_radius_voxels=(
-                outlier_filter_support_radius_voxels
-            ),
-            outlier_filter_min_supported_fraction=(
-                outlier_filter_min_supported_fraction
+            outlier_filter_min_component_size_ratio=(
+                outlier_filter_min_component_size_ratio
             ),
             enable_timing=self.enable_profiling,
             validate_finite=validate_finite,
@@ -161,6 +149,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         self._slot_selection_indices: list[torch.Tensor | None] = [None, None]
         self._slot_point_ids: list[torch.Tensor | None] = [None, None]
+        self._slot_input_keep_masks: list[torch.Tensor | None] = [None, None]
         self._slot_preprocess_info: list[dict[str, object] | None] = [None, None]
 
         self._next_slot = 0
@@ -173,7 +162,6 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
-        self._last_profile: dict[str, float] | None = None
 
         self._capture(int(warmup))
 
@@ -273,7 +261,6 @@ class DifFlow3DStreamingCudaGraphRunner:
             return
         self._profile_events = []
         self._profile_active = True
-        self._last_profile = None
 
     def _profile_pair(
         self,
@@ -330,19 +317,6 @@ class DifFlow3DStreamingCudaGraphRunner:
             totals[pair.label] = totals.get(pair.label, 0.0) + float(
                 pair.start.elapsed_time(pair.end)
             )
-        totals["preprocess_ms"] = (
-            totals.get("voxel2_ms", 0.0)
-            + totals.get("outlier_filter_ms", 0.0)
-            + totals.get("final_selection_ms", 0.0)
-            + totals.get("stage_scale_ms", 0.0)
-        )
-        totals["graph_ms"] = (
-            totals.get("encode_ms", 0.0) + totals.get("decode_ms", 0.0)
-        )
-        totals["profiled_runner_ms"] = (
-            totals["preprocess_ms"] + totals["graph_ms"]
-        )
-        self._last_profile = dict(totals)
         self._profile_active = False
         return totals
 
@@ -451,6 +425,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         self._slot_selection_indices[slot] = prepared.selection_indices
         self._slot_point_ids[slot] = prepared.point_ids
+        self._slot_input_keep_masks[slot] = prepared.input_keep_mask
         info = dict(prepared.info)
         info["spatial_scale"] = scale
         if "world_extent" in info:
@@ -478,8 +453,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         return self.input_a if self._next_slot == 0 else self.input_b
 
     def reset(self) -> None:
-        """Reset temporal state without recapturing graphs/calibration."""
-        self.preprocessor.reset_temporal_history()
+        """Reset streaming state without recapturing graphs/calibration."""
         self._next_slot = 0
         self._previous_slot = None
         self._last_source_slot = None
@@ -489,7 +463,6 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._current_warped = None
         self._profile_active = False
         self._profile_events = []
-        self._last_profile = None
 
     def _replay_encode(self, slot: int) -> None:
         if self.enable_profiling and self._profile_active:
@@ -655,6 +628,24 @@ class DifFlow3DStreamingCudaGraphRunner:
         result = self._slot_point_ids[self._last_target_slot]
         if result is None:
             raise RuntimeError("Target frame was not staged with point_ids.")
+        return result
+
+    def source_input_keep_mask(self) -> torch.Tensor:
+        """Mask over the source frame passed to :meth:`stage_world`."""
+        if self._last_source_slot is None:
+            raise RuntimeError("At least two frames are required.")
+        result = self._slot_input_keep_masks[self._last_source_slot]
+        if result is None:
+            raise RuntimeError("Source frame was not staged with stage_world().")
+        return result
+
+    def target_input_keep_mask(self) -> torch.Tensor:
+        """Mask over the target frame passed to :meth:`stage_world`."""
+        if self._last_target_slot is None:
+            raise RuntimeError("At least two frames are required.")
+        result = self._slot_input_keep_masks[self._last_target_slot]
+        if result is None:
+            raise RuntimeError("Target frame was not staged with stage_world().")
         return result
 
     def source_preprocess_info(self) -> dict[str, object]:

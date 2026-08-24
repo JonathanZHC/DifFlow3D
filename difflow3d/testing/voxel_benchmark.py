@@ -109,17 +109,8 @@ def run(config: dict) -> None:
         fixed_spatial_scale=fixed_spatial_scale,
         final_selection=args.final_selection,
         outlier_filter_enabled=args.outlier_filter_enabled,
-        outlier_filter_tiny_component_max_voxels=(
-            args.outlier_filter_tiny_component_max_voxels
-        ),
-        outlier_filter_max_small_component_fraction=(
-            args.outlier_filter_max_small_component_fraction
-        ),
-        outlier_filter_support_radius_voxels=(
-            args.outlier_filter_support_radius_voxels
-        ),
-        outlier_filter_min_supported_fraction=(
-            args.outlier_filter_min_supported_fraction
+        outlier_filter_min_component_size_ratio=(
+            args.outlier_filter_min_component_size_ratio
         ),
         enable_profiling=args.detailed_runtime_breakdown,
         validate_finite=args.validate_finite,
@@ -160,11 +151,8 @@ def run(config: dict) -> None:
     print(f"Voxel outlier filter:         {args.outlier_filter_enabled}")
     if args.outlier_filter_enabled:
         print(
-            "Outlier H/fraction/radius/tau: "
-            f"{args.outlier_filter_tiny_component_max_voxels} / "
-            f"{args.outlier_filter_max_small_component_fraction:.6f} / "
-            f"{args.outlier_filter_support_radius_voxels} / "
-            f"{args.outlier_filter_min_supported_fraction:.3f}"
+            "Outlier minimum component/max ratio: "
+            f"{args.outlier_filter_min_component_size_ratio:.4f}"
         )
     print(f"Calibration selection mode:   {anchor_info.get('selection_mode')}")
     print(f"Auto spatial scale:           {auto_spatial_scale}")
@@ -261,7 +249,7 @@ def run(config: dict) -> None:
         "runner_stage_scale_ms": [],
         "runner_encode_ms": [],
         "runner_decode_ms": [],
-        "runner_profiled_ms": [],
+        "runner_other_ms": [],
         "runner_model_total_ms": [],
         "temporal_filter_ms": [],
         "recovery_ms": [],
@@ -394,7 +382,7 @@ def run(config: dict) -> None:
         stage_scale_ms = float(profile.get("stage_scale_ms", 0.0))
         encode_ms = float(profile.get("encode_ms", 0.0))
         decode_ms = float(profile.get("decode_ms", 0.0))
-        profiled_runner_ms = float(profile.get("profiled_runner_ms", 0.0))
+        runner_other_ms = runner_model_total_ms - float(sum(profile.values()))
         candidate_count = int(target_info.get("candidate_count", args.fps_points))
         candidate_counts.append(candidate_count)
         timing["runner_voxel2_ms"].append(voxel2_ms)
@@ -403,7 +391,7 @@ def run(config: dict) -> None:
         timing["runner_stage_scale_ms"].append(stage_scale_ms)
         timing["runner_encode_ms"].append(encode_ms)
         timing["runner_decode_ms"].append(decode_ms)
-        timing["runner_profiled_ms"].append(profiled_runner_ms)
+        timing["runner_other_ms"].append(runner_other_ms)
         timing["runner_model_total_ms"].append(runner_model_total_ms)
         timing["temporal_filter_ms"].append(temporal_filter_ms)
         timing["recovery_ms"].append(recovery_ms)
@@ -464,7 +452,7 @@ def run(config: dict) -> None:
             "runner_stage_scale_ms": stage_scale_ms,
             "runner_encode_ms": encode_ms,
             "runner_decode_ms": decode_ms,
-            "runner_profiled_ms": profiled_runner_ms,
+            "runner_other_ms": runner_other_ms,
             "runner_model_total_ms": runner_model_total_ms,
             "temporal_filter_ms": temporal_filter_ms,
             "recovery_ms": recovery_ms,
@@ -495,20 +483,15 @@ def run(config: dict) -> None:
         )
         if args.outlier_filter_enabled:
             if isinstance(outlier_stats, dict):
-                support = outlier_stats.get("temporal_supported_fraction")
-                support_text = "n/a" if support is None else f"{float(support):.3f}"
                 print(
                     "  outlier | "
                     f"blocks {int(outlier_stats['component_count']):4d}, "
                     f"largest {int(outlier_stats['largest_component_voxels']):5d} vox, "
-                    f"tiny removed {int(outlier_stats['tiny_removed_component_count']):3d}, "
-                    f"temporal candidates {int(outlier_stats['temporal_candidate_component_count']):3d}, "
-                    f"supported/rejected "
-                    f"{int(outlier_stats['temporal_supported_component_count'])}/"
-                    f"{int(outlier_stats['temporal_rejected_component_count'])}, "
+                    f"retained {int(outlier_stats['retained_component_count']):3d}, "
+                    f"instances with removals "
+                    f"{int(outlier_stats['instances_with_removed_components'])}, "
                     f"removed {int(outlier_stats['removed_component_count'])} blocks / "
-                    f"{int(outlier_stats['removed_voxel_count'])} vox, "
-                    f"support {support_text}"
+                    f"{int(outlier_stats['removed_voxel_count'])} vox"
                 )
             else:
                 print("  outlier | bypassed because adaptive voxel-2 was not used")
@@ -559,12 +542,8 @@ def run(config: dict) -> None:
         removed_voxels = sum(
             int(x["removed_voxel_count"]) for x in outlier_frame_stats
         )
-        temporal_candidates = sum(
-            int(x["temporal_candidate_component_count"])
-            for x in outlier_frame_stats
-        )
-        temporal_rejected = sum(
-            int(x["temporal_rejected_component_count"])
+        instances_with_removals = sum(
+            int(x["instances_with_removed_components"])
             for x in outlier_frame_stats
         )
         print("\nOutlier-filter statistics")
@@ -578,8 +557,8 @@ def run(config: dict) -> None:
             f"{removed_blocks} / {removed_voxels}"
         )
         print(
-            "Temporal candidates/rejected:     "
-            f"{temporal_candidates} / {temporal_rejected}"
+            "Instances with removed blocks:    "
+            f"{instances_with_removals}"
         )
     if local_neighbor_frame_stats:
         local_mean = np.mean([x["mean"] for x in local_neighbor_frame_stats])
@@ -597,14 +576,14 @@ def run(config: dict) -> None:
         ("host_stage_ms", "CPU -> pinned stage"),
         ("h2d_ms", "Pinned H2D"),
         ("first_downsample_ms", "GPU first voxel"),
+        ("runner_model_total_ms", "Runner preprocess + DifFlow"),
         ("runner_voxel2_ms", "Runner voxel-2"),
         ("runner_outlier_filter_ms", "Runner outlier filter"),
         ("runner_final_selection_ms", "Runner final selection"),
         ("runner_stage_scale_ms", "Runner stage + scale"),
         ("runner_encode_ms", "Runner encode"),
         ("runner_decode_ms", "Runner decode"),
-        ("runner_profiled_ms", "Runner profiled sum"),
-        ("runner_model_total_ms", "Runner preprocess + DifFlow"),
+        ("runner_other_ms", "Runner other"),
         ("temporal_filter_ms", f"Temporal motion ({temporal_estimator.mode_name})"),
         ("recovery_ms", "Dense recovery"),
         ("overall_wall_ms", "Online overall"),
@@ -640,17 +619,8 @@ def run(config: dict) -> None:
             "second_candidate_ratio": float(args.second_candidate_ratio),
             "outlier_filter": {
                 "enabled": bool(args.outlier_filter_enabled),
-                "tiny_component_max_voxels": int(
-                    args.outlier_filter_tiny_component_max_voxels
-                ),
-                "max_small_component_fraction": float(
-                    args.outlier_filter_max_small_component_fraction
-                ),
-                "support_radius_voxels": int(
-                    args.outlier_filter_support_radius_voxels
-                ),
-                "min_supported_fraction": float(
-                    args.outlier_filter_min_supported_fraction
+                "min_component_size_ratio": float(
+                    args.outlier_filter_min_component_size_ratio
                 ),
             },
             "recovery_backend": args.recovery_backend,

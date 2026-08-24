@@ -34,10 +34,7 @@ class DifFlow3DConfig:
     fixed_spatial_scale: float = 1.0
     final_selection: str = "fps"
     outlier_filter_enabled: bool = False
-    outlier_filter_tiny_component_max_voxels: int = 2
-    outlier_filter_max_small_component_fraction: float = 0.005
-    outlier_filter_support_radius_voxels: int = 1
-    outlier_filter_min_supported_fraction: float = 0.3
+    outlier_filter_min_component_size_ratio: float = 0.05
     enable_profiling: bool = False
     validate_finite: bool = False
 
@@ -103,17 +100,8 @@ class DifFlow3DInference:
             fixed_spatial_scale=config.fixed_spatial_scale,
             final_selection=config.final_selection,
             outlier_filter_enabled=config.outlier_filter_enabled,
-            outlier_filter_tiny_component_max_voxels=(
-                config.outlier_filter_tiny_component_max_voxels
-            ),
-            outlier_filter_max_small_component_fraction=(
-                config.outlier_filter_max_small_component_fraction
-            ),
-            outlier_filter_support_radius_voxels=(
-                config.outlier_filter_support_radius_voxels
-            ),
-            outlier_filter_min_supported_fraction=(
-                config.outlier_filter_min_supported_fraction
+            outlier_filter_min_component_size_ratio=(
+                config.outlier_filter_min_component_size_ratio
             ),
             enable_profiling=config.enable_profiling,
             validate_finite=config.validate_finite,
