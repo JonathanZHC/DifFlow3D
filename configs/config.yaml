@@ -19,15 +19,28 @@ model:
 
 preprocessing:
   # Fixed CUDA-Graph/model input count. Must be >= 1024.
-  fps_points: 8192
+  fps_points: 2048
   # Adaptive voxel-2 targets ceil(ratio * fps_points) candidates.
   second_candidate_ratio: 1.1
   # fps | uniform. Uniform is the measured-fast deployment default.
   final_selection: uniform
 
-  auto_spatial_scale: true
-  target_model_volume: 2.0       # used when auto_spatial_scale=true
-  fixed_spatial_scale: 1.0       # used when auto_spatial_scale=false
+  # Optional sparse 26-neighbor connected-component filter. It runs on CUDA
+  # after adaptive voxel-2 and before exact-count selection/FPS.
+  outlier_filter:
+    enabled: true
+    # Largest block(s) always stay; non-largest blocks <= H are removed.
+    tiny_component_max_voxels: 2
+    # For H < size <= max(H, ceil(fraction * N)), require temporal support.
+    max_small_component_fraction: 0.05
+    # A voxel is supported within this Chebyshev radius in the previous frame.
+    support_radius_voxels: 1
+    min_supported_fraction: 0.30
+
+  auto_spatial_scale:
+    enable: true
+    target_model_volume: 2.0     # used when enable=true
+    fixed_spatial_scale: 1.0     # used when enable=false
 
 motion_estimation:
   # false -> raw DifFlow velocity (flow / dt); true -> velocity-only KF.

@@ -52,6 +52,11 @@ class DifFlow3DStreamingCudaGraphRunner:
         fixed_spatial_scale: float = 1.0,
         volume_epsilon: float = 1.0e-12,
         final_selection: str = "fps",
+        outlier_filter_enabled: bool = False,
+        outlier_filter_tiny_component_max_voxels: int = 2,
+        outlier_filter_max_small_component_fraction: float = 0.005,
+        outlier_filter_support_radius_voxels: int = 1,
+        outlier_filter_min_supported_fraction: float = 0.3,
         enable_profiling: bool = False,
         validate_finite: bool = False,
     ) -> None:
@@ -119,6 +124,19 @@ class DifFlow3DStreamingCudaGraphRunner:
             fixed_spatial_scale=fixed_spatial_scale,
             volume_epsilon=volume_epsilon,
             final_selection=final_selection,
+            outlier_filter_enabled=outlier_filter_enabled,
+            outlier_filter_tiny_component_max_voxels=(
+                outlier_filter_tiny_component_max_voxels
+            ),
+            outlier_filter_max_small_component_fraction=(
+                outlier_filter_max_small_component_fraction
+            ),
+            outlier_filter_support_radius_voxels=(
+                outlier_filter_support_radius_voxels
+            ),
+            outlier_filter_min_supported_fraction=(
+                outlier_filter_min_supported_fraction
+            ),
             enable_timing=self.enable_profiling,
             validate_finite=validate_finite,
         )
@@ -275,8 +293,13 @@ class DifFlow3DStreamingCudaGraphRunner:
             return
         self._profile_pair("voxel2_ms", events.start, events.after_voxel2)
         self._profile_pair(
-            "final_selection_ms",
+            "outlier_filter_ms",
             events.after_voxel2,
+            events.after_outlier_filter,
+        )
+        self._profile_pair(
+            "final_selection_ms",
+            events.after_outlier_filter,
             events.after_exact_count,
         )
         self._profile_pair(
@@ -309,6 +332,7 @@ class DifFlow3DStreamingCudaGraphRunner:
             )
         totals["preprocess_ms"] = (
             totals.get("voxel2_ms", 0.0)
+            + totals.get("outlier_filter_ms", 0.0)
             + totals.get("final_selection_ms", 0.0)
             + totals.get("stage_scale_ms", 0.0)
         )
@@ -455,6 +479,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
     def reset(self) -> None:
         """Reset temporal state without recapturing graphs/calibration."""
+        self.preprocessor.reset_temporal_history()
         self._next_slot = 0
         self._previous_slot = None
         self._last_source_slot = None

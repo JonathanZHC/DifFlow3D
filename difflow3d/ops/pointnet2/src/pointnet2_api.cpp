@@ -75,6 +75,23 @@ void anchor_kalman_update_wrapper(
     double min_innovation_variance,
     at::Tensor output_state6);
 
+void voxel_component_filter_wrapper(
+    at::Tensor sorted_keys,
+    at::Tensor shifted_coords,
+    at::Tensor absolute_coords,
+    at::Tensor extents,
+    at::Tensor previous_absolute_coords,
+    int64_t tiny_component_max_voxels,
+    int64_t max_small_component_voxels,
+    int64_t support_radius_voxels,
+    double min_supported_fraction,
+    at::Tensor parents,
+    at::Tensor component_sizes,
+    at::Tensor supported_counts,
+    at::Tensor largest_component_size,
+    at::Tensor keep_mask,
+    at::Tensor statistics);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("ball_query_wrapper", &ball_query_wrapper_fast, "ball_query_wrapper_fast");
 
@@ -114,4 +131,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "anchor_kalman_update_wrapper",
         &anchor_kalman_update_wrapper,
         "Fused velocity-only anchor Kalman update");
+    m.def(
+        "voxel_component_filter_wrapper",
+        &voxel_component_filter_wrapper,
+        "Sparse 26-neighbor voxel connected-component outlier filter");
 }

@@ -83,6 +83,7 @@ If RViz cannot connect to the display, verify that `DISPLAY` is set on the host 
 raw world cloud
   -> first metric voxel downsample
   -> adaptive voxel-2
+  -> optional voxel connected-component outlier filter
   -> exact-count selection -> 2048 anchors
   -> frozen spatial canonicalization
   -> encode each frame once
@@ -105,8 +106,16 @@ preprocessing:
   fps_points: 2048
   second_candidate_ratio: 1.1
   final_selection: uniform
-  auto_spatial_scale: true
-  target_model_volume: 2.0
+  outlier_filter:
+    enabled: true
+    tiny_component_max_voxels: 2
+    max_small_component_fraction: 0.005
+    support_radius_voxels: 1
+    min_supported_fraction: 0.30
+  auto_spatial_scale:
+    enable: true
+    target_model_volume: 2.0
+    fixed_spatial_scale: 1.0
 
 recovery:
   softmax_sigma_m: 0.025
@@ -138,6 +147,7 @@ N1 < K       -> deterministic repeat to K
 N1 = K       -> direct
 K < N1 <= C  -> exact-count selection to K
 N1 > C       -> adaptive voxel-2
+                 optional component filter
                  N2 < K  -> repeat
                  N2 = K  -> direct
                  N2 > K  -> exact-count selection
@@ -147,7 +157,62 @@ N1 > C       -> adaptive voxel-2
 
 Voxel-2 resolution is calibrated once and then frozen. Spatial scale is also calibrated once and frozen until the preprocessing calibration is explicitly reset.
 
+The optional outlier filter operates after voxel-2 and before exact-count
+selection/FPS. It uses the following rule. Let `N` be the current number of
+unique voxel-2 representatives, `H = tiny_component_max_voxels`, and
+
+\[
+S = \max\left(H,\left\lceil
+\texttt{max\_small\_component\_fraction}\,N
+\right\rceil\right).
+\]
+
+The current voxels are split into sparse 26-neighbor connected components. All
+components tied for largest are retained. Every other component of size `s` is
+classified as follows:
+
+1. `s <= H`: remove immediately.
+2. `H < s <= S`: retain only when its previous-frame supported-voxel fraction
+   is at least `min_supported_fraction`.
+3. `s > S`: retain.
+
+A current voxel is temporally supported when the unfiltered previous-frame
+voxel set contains at least one voxel within Chebyshev distance
+`support_radius_voxels`. Thus a value of `1` checks the surrounding 3 x 3 x 3
+voxel neighborhood and tolerates one-voxel motion or quantization jitter. On the
+first frame, temporal evidence is unavailable: medium components are retained,
+while the tiny-component rule still applies. History always contains only the
+immediately preceding unfiltered voxel-2 observations and is cleared when a
+frame bypasses voxel-2 or the streaming runner is reset.
+
+The preprocessing API does not receive track IDs, so the implementation treats
+the complete cloud as one virtual object. Temporal matching uses absolute
+world-space voxel coordinates; upstream world-frame alignment is therefore
+preserved naturally. Multiple large occlusion-separated blocks remain valid
+because every largest component and every component above `S` is retained.
+
+When enabled, the benchmarks print the component count, largest block size,
+tiny blocks removed, temporal candidates, supported/rejected candidates,
+removed blocks/voxels, temporal support fraction, and filter time. CUDA writes
+these statistics to a fixed-size buffer; it is read only after an already
+required benchmark synchronization, so reporting does not add a synchronization
+to the measured filter path.
+
+The existing repeat path handles a retained count below `K`; the filter has no
+separate point-count fallback.
+
+The filter is part of the bundled PointNet2 extension and adds no Python package
+dependency. Rebuild the extension after pulling these sources:
+
+```bash
+bash scripts/build_pointnet2_ops.sh
+python3 scripts/test_voxel_outlier_filter.py
+```
+
 ## Spatial canonicalization
+
+Set `preprocessing.auto_spatial_scale.enable` to `true` to fit the scale from
+`target_model_volume`. Set it to `false` to use `fixed_spatial_scale` directly.
 
 With automatic scaling enabled:
 
@@ -243,7 +308,9 @@ cd /workspace
 bash scripts/build_pointnet2_ops.sh
 ```
 
-The script removes stale local build products, builds the extension in-place, verifies that the loaded `.so` comes from the current checkout, and checks the required global/local recovery symbols.
+The script removes stale local build products, builds the extension in-place,
+verifies that the loaded `.so` comes from the current checkout, and checks the
+required recovery, motion, and voxel-component symbols.
 
 ## Validate runtime CUDA ops
 
@@ -272,7 +339,9 @@ Inside an already-running container, the direct command is still available:
 python3 scripts/test_voxel_difflow.py --config configs/config.yaml
 ```
 
-With detailed profiling enabled, the benchmark reports first voxel, voxel-2, final selection, scale/staging, encode, decode, velocity-KF filtering (when enabled), dense recovery, and overall latency.
+With detailed profiling enabled, the benchmark reports first voxel, voxel-2,
+voxel outlier filtering, final selection, scale/staging, encode, decode,
+velocity-KF filtering (when enabled), dense recovery, and overall latency.
 
 For absolute deployment timing, use:
 

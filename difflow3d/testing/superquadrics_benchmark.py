@@ -6,8 +6,13 @@ import time
 import numpy as np
 import torch
 
-from difflow3d.config import parse_iteration_schedule, resolve_repo_path
+from difflow3d.config import (
+    parse_iteration_schedule,
+    parse_spatial_scale_config,
+    resolve_repo_path,
+)
 from difflow3d.runtime import DifFlow3DConfig, DifFlow3DInference
+from difflow3d.runtime.voxel_outlier import resolve_voxel_outlier_statistics
 from .first_voxel import FirstVoxelFrame
 from .metrics import cuda_index, synchronize, summarize, print_timing_row
 from .synthetic_scene import OnlineSceneGenerator, make_obstacle_specs
@@ -35,6 +40,8 @@ def run(config: dict) -> None:
     runtime = config["runtime"]
     model_cfg = config["model"]
     prep_cfg = config["preprocessing"]
+    outlier_cfg = prep_cfg.get("outlier_filter", {})
+    spatial_scale_cfg = parse_spatial_scale_config(prep_cfg)
     base_bench = config["benchmark"]
     bench = config["superquadrics_benchmark"]
 
@@ -86,10 +93,27 @@ def run(config: dict) -> None:
         max_frame_gap_s=2.0 * dt_s,
         second_base_voxel_size_m=float(base_bench["voxel_resolution_m"]) * dimension_factor,
         second_candidate_ratio=float(prep_cfg["second_candidate_ratio"]),
-        auto_spatial_scale=bool(prep_cfg["auto_spatial_scale"]),
-        target_model_volume=float(prep_cfg["target_model_volume"]),
-        fixed_spatial_scale=float(prep_cfg.get("fixed_spatial_scale", 1.0)),
+        auto_spatial_scale=bool(spatial_scale_cfg["enable"]),
+        target_model_volume=float(
+            spatial_scale_cfg["target_model_volume"]
+        ),
+        fixed_spatial_scale=float(
+            spatial_scale_cfg["fixed_spatial_scale"]
+        ),
         final_selection=str(prep_cfg.get("final_selection", "fps")),
+        outlier_filter_enabled=bool(outlier_cfg.get("enabled", False)),
+        outlier_filter_tiny_component_max_voxels=int(
+            outlier_cfg.get("tiny_component_max_voxels", 2)
+        ),
+        outlier_filter_max_small_component_fraction=float(
+            outlier_cfg.get("max_small_component_fraction", 0.005)
+        ),
+        outlier_filter_support_radius_voxels=int(
+            outlier_cfg.get("support_radius_voxels", 1)
+        ),
+        outlier_filter_min_supported_fraction=float(
+            outlier_cfg.get("min_supported_fraction", 0.3)
+        ),
         enable_profiling=bool(
             config.get("profiling", {}).get("detailed_runtime_breakdown", False)
         ),
@@ -102,7 +126,7 @@ def run(config: dict) -> None:
     first_frame = _as_direct_frame(first_scene, device)
     calibration = estimator.calibrate(first_frame.first_downsample_points)
     print("=" * 96)
-    print("Direct superquadric world PCD -> runner[voxel-2/select/scale] -> DifFlow3D")
+    print("Direct superquadric world PCD -> runner[voxel-2/filter/select/scale] -> DifFlow3D")
     print("=" * 96)
     print(f"Dimension factor:       {dimension_factor:.6f}")
     print(f"Motion enabled:         {motion}")
@@ -110,6 +134,15 @@ def run(config: dict) -> None:
     print(f"Model points:           {fps_points}")
     print(f"Candidate ratio:        {float(prep_cfg['second_candidate_ratio']):.3f}")
     print(f"Final selection:        {str(prep_cfg.get('final_selection', 'fps'))}")
+    print(f"Outlier filter:         {bool(outlier_cfg.get('enabled', False))}")
+    if bool(outlier_cfg.get("enabled", False)):
+        print(
+            "Outlier H/fraction/r/tau: "
+            f"{int(outlier_cfg.get('tiny_component_max_voxels', 2))} / "
+            f"{float(outlier_cfg.get('max_small_component_fraction', 0.005)):.6f} / "
+            f"{int(outlier_cfg.get('support_radius_voxels', 1))} / "
+            f"{float(outlier_cfg.get('min_supported_fraction', 0.3)):.3f}"
+        )
     print(
         "Iterations C/M/F:       "
         f"{iterations['coarse']}/{iterations['middle']}/{iterations['fine']}"
@@ -145,6 +178,22 @@ def run(config: dict) -> None:
         estimate = estimator.infer(previous_frame, current_frame)
         end.record(); end.synchronize()
         model_times.append(float(start.elapsed_time(end)))
+        target_info = resolve_voxel_outlier_statistics(
+            estimate.target_preprocess_info
+        )
+        stats = target_info.get("outlier_filter_statistics")
+        if bool(outlier_cfg.get("enabled", False)):
+            if isinstance(stats, dict):
+                print(
+                    f"frame {index:03d} outlier: "
+                    f"blocks={int(stats['component_count'])}, "
+                    f"tiny_removed={int(stats['tiny_removed_component_count'])}, "
+                    f"temporal_candidates={int(stats['temporal_candidate_component_count'])}, "
+                    f"temporal_rejected={int(stats['temporal_rejected_component_count'])}, "
+                    f"removed_voxels={int(stats['removed_voxel_count'])}"
+                )
+            else:
+                print(f"frame {index:03d} outlier: voxel-2 bypassed")
         gt = torch.from_numpy(previous_scene.gt_flow_to_next).to(device)
         gt_anchor = gt.index_select(0, estimate.valid_indices)
         epe = torch.linalg.vector_norm(estimate.residual_flow - gt_anchor, dim=1).mean().item()

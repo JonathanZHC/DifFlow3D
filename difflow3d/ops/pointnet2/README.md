@@ -5,6 +5,7 @@ This directory contains the native operators required by DifFlow3D inference:
 - PointNet++ sampling/grouping/interpolation kernels used by the network.
 - exact global Gaussian-softmax dense recovery.
 - radius-local hash-grid Gaussian-softmax dense recovery.
+- sparse 26-neighbor voxel components with one-frame temporal support.
 
 The model's Euclidean KNN path uses PyTorch GEMM + `topk`; the slower experimental custom KNN extension is intentionally not built.
 

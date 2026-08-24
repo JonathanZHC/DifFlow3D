@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -53,6 +54,51 @@ def parse_iteration_schedule(value) -> dict[str, int]:
     return schedule
 
 
+def parse_spatial_scale_config(preprocessing: dict) -> dict[str, bool | float]:
+    """Validate and normalize preprocessing.auto_spatial_scale."""
+    value = preprocessing.get("auto_spatial_scale")
+    if not isinstance(value, dict):
+        raise ValueError(
+            "preprocessing.auto_spatial_scale must be a mapping with "
+            "enable, target_model_volume, and fixed_spatial_scale."
+        )
+
+    required = {
+        "enable",
+        "target_model_volume",
+        "fixed_spatial_scale",
+    }
+    missing = required - set(value)
+    if missing:
+        raise ValueError(
+            "preprocessing.auto_spatial_scale is missing "
+            f"{sorted(missing)}."
+        )
+    if not isinstance(value["enable"], bool):
+        raise ValueError(
+            "preprocessing.auto_spatial_scale.enable must be a boolean."
+        )
+
+    target_model_volume = float(value["target_model_volume"])
+    fixed_spatial_scale = float(value["fixed_spatial_scale"])
+    if not math.isfinite(target_model_volume) or target_model_volume <= 0.0:
+        raise ValueError(
+            "preprocessing.auto_spatial_scale.target_model_volume must be "
+            "positive."
+        )
+    if not math.isfinite(fixed_spatial_scale) or fixed_spatial_scale <= 0.0:
+        raise ValueError(
+            "preprocessing.auto_spatial_scale.fixed_spatial_scale must be "
+            "positive."
+        )
+
+    return {
+        "enable": value["enable"],
+        "target_model_volume": target_model_volume,
+        "fixed_spatial_scale": fixed_spatial_scale,
+    }
+
+
 def voxel_namespace(config: dict) -> SimpleNamespace:
     """Flatten the YAML sections used by the synthetic voxel benchmark."""
     root = Path(config["_repo_root"])
@@ -63,6 +109,8 @@ def voxel_namespace(config: dict) -> SimpleNamespace:
     benchmark = config["benchmark"]
     rviz = config["rviz"]
     profiling = config.get("profiling", {})
+    outlier = prep.get("outlier_filter", {})
+    spatial_scale = parse_spatial_scale_config(prep)
     iterations = parse_iteration_schedule(model["iterations"])
 
     return SimpleNamespace(
@@ -85,9 +133,22 @@ def voxel_namespace(config: dict) -> SimpleNamespace:
         non_strict_checkpoint=not bool(model["strict_checkpoint"]),
         keep_bn_running_stats=not bool(model["disable_bn_running_stats"]),
         second_candidate_ratio=float(prep["second_candidate_ratio"]),
-        auto_spatial_scale=bool(prep["auto_spatial_scale"]),
-        fixed_spatial_scale=prep.get("fixed_spatial_scale"),
-        target_model_volume=float(prep["target_model_volume"]),
+        outlier_filter_enabled=bool(outlier.get("enabled", False)),
+        outlier_filter_tiny_component_max_voxels=int(
+            outlier.get("tiny_component_max_voxels", 2)
+        ),
+        outlier_filter_max_small_component_fraction=float(
+            outlier.get("max_small_component_fraction", 0.005)
+        ),
+        outlier_filter_support_radius_voxels=int(
+            outlier.get("support_radius_voxels", 1)
+        ),
+        outlier_filter_min_supported_fraction=float(
+            outlier.get("min_supported_fraction", 0.3)
+        ),
+        auto_spatial_scale=bool(spatial_scale["enable"]),
+        fixed_spatial_scale=float(spatial_scale["fixed_spatial_scale"]),
+        target_model_volume=float(spatial_scale["target_model_volume"]),
         recovery_backend=str(recovery.get("backend", "local")),
         recovery_chunk_size=int(recovery["chunk_size"]),
         recovery_softmax_sigma=float(recovery["softmax_sigma_m"]),

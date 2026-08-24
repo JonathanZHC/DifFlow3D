@@ -9,6 +9,7 @@ import torch
 
 from difflow3d.config import voxel_namespace
 from difflow3d.runtime import DifFlow3DConfig, DifFlow3DInference, SoftmaxAnchorMotionRecoverer
+from difflow3d.runtime.voxel_outlier import resolve_voxel_outlier_statistics
 from .synthetic_scene import OnlineSceneFrame, OnlineSceneGenerator, make_obstacle_specs
 from .first_voxel import FirstVoxelFrame, FirstVoxelPreprocessor
 from .temporal_motion import StreamingAnchorMotionEstimator
@@ -107,6 +108,19 @@ def run(config: dict) -> None:
         target_model_volume=args.target_model_volume,
         fixed_spatial_scale=fixed_spatial_scale,
         final_selection=args.final_selection,
+        outlier_filter_enabled=args.outlier_filter_enabled,
+        outlier_filter_tiny_component_max_voxels=(
+            args.outlier_filter_tiny_component_max_voxels
+        ),
+        outlier_filter_max_small_component_fraction=(
+            args.outlier_filter_max_small_component_fraction
+        ),
+        outlier_filter_support_radius_voxels=(
+            args.outlier_filter_support_radius_voxels
+        ),
+        outlier_filter_min_supported_fraction=(
+            args.outlier_filter_min_supported_fraction
+        ),
         enable_profiling=args.detailed_runtime_breakdown,
         validate_finite=args.validate_finite,
     )
@@ -127,7 +141,7 @@ def run(config: dict) -> None:
     anchor_info = calibration["anchor_info"]
 
     print("=" * 104)
-    print("Raw -> voxel-1 -> RUNNER[adaptive voxel-2 -> exact-count selection -> scale -> DifFlow3D] -> softmax recovery")
+    print("Raw -> voxel-1 -> RUNNER[adaptive voxel-2 -> optional outlier filter -> exact-count selection -> scale -> DifFlow3D] -> softmax recovery")
     print("=" * 104)
     print(f"Dimension factor:             {dimension_factor:.6f}")
     print(f"Motion enabled:               {bool(args.motion)}")
@@ -143,6 +157,15 @@ def run(config: dict) -> None:
     print(f"Second candidate ratio:       {args.second_candidate_ratio:.3f}")
     print(f"Model points:                 {args.fps_points}")
     print(f"Final selection backend:      {args.final_selection}")
+    print(f"Voxel outlier filter:         {args.outlier_filter_enabled}")
+    if args.outlier_filter_enabled:
+        print(
+            "Outlier H/fraction/radius/tau: "
+            f"{args.outlier_filter_tiny_component_max_voxels} / "
+            f"{args.outlier_filter_max_small_component_fraction:.6f} / "
+            f"{args.outlier_filter_support_radius_voxels} / "
+            f"{args.outlier_filter_min_supported_fraction:.3f}"
+        )
     print(f"Calibration selection mode:   {anchor_info.get('selection_mode')}")
     print(f"Auto spatial scale:           {auto_spatial_scale}")
     print(f"Target model volume:          {args.target_model_volume:.6f}")
@@ -233,6 +256,7 @@ def run(config: dict) -> None:
         "h2d_ms": [],
         "first_downsample_ms": [],
         "runner_voxel2_ms": [],
+        "runner_outlier_filter_ms": [],
         "runner_final_selection_ms": [],
         "runner_stage_scale_ms": [],
         "runner_encode_ms": [],
@@ -251,6 +275,7 @@ def run(config: dict) -> None:
     first_velocity_epe_chunks: list[np.ndarray] = []
     per_frame: list[dict[str, object]] = []
     local_neighbor_frame_stats: list[dict[str, float]] = []
+    outlier_frame_stats: list[dict[str, object]] = []
     temporal_supported_ratios: list[float] = []
 
     previous_prepared: FirstVoxelFrame | None = None
@@ -330,6 +355,15 @@ def run(config: dict) -> None:
         recovery_end.record()
         recovery_end.synchronize()
 
+        # CUDA is already synchronized for timing, so resolving the fixed-size
+        # statistics buffer adds no synchronization to the measured hot path.
+        target_info = resolve_voxel_outlier_statistics(
+            estimate.target_preprocess_info
+        )
+        outlier_stats = target_info.get("outlier_filter_statistics")
+        if isinstance(outlier_stats, dict):
+            outlier_frame_stats.append(dict(outlier_stats))
+
         runner_model_total_ms = float(model_start.elapsed_time(model_end))
         temporal_filter_ms = (
             float(temporal_start.elapsed_time(temporal_end))
@@ -354,8 +388,8 @@ def run(config: dict) -> None:
             local_neighbor_frame_stats.append(local_stats)
 
         profile = estimator.resolve_last_profile(synchronize=False)
-        target_info = estimate.target_preprocess_info
         voxel2_ms = float(profile.get("voxel2_ms", 0.0))
+        outlier_filter_ms = float(profile.get("outlier_filter_ms", 0.0))
         selection_ms = float(profile.get("final_selection_ms", 0.0))
         stage_scale_ms = float(profile.get("stage_scale_ms", 0.0))
         encode_ms = float(profile.get("encode_ms", 0.0))
@@ -364,6 +398,7 @@ def run(config: dict) -> None:
         candidate_count = int(target_info.get("candidate_count", args.fps_points))
         candidate_counts.append(candidate_count)
         timing["runner_voxel2_ms"].append(voxel2_ms)
+        timing["runner_outlier_filter_ms"].append(outlier_filter_ms)
         timing["runner_final_selection_ms"].append(selection_ms)
         timing["runner_stage_scale_ms"].append(stage_scale_ms)
         timing["runner_encode_ms"].append(encode_ms)
@@ -412,11 +447,19 @@ def run(config: dict) -> None:
             "final_selection": args.final_selection,
             "selection_mode": target_info.get("selection_mode"),
             "second_voxel_used": bool(target_info.get("second_voxel_used", False)),
+            "outlier_filter_applied": bool(
+                target_info.get("outlier_filter_applied", False)
+            ),
+            "outlier_filter_removed_points": int(
+                target_info.get("outlier_filter_removed_count", 0)
+            ),
+            "outlier_filter": outlier_stats,
             "spatial_scale": float(target_info.get("spatial_scale", estimator.runner.spatial_scale)),
             "host_stage_ms": prepared.host_stage_ms,
             "h2d_ms": prepared.h2d_ms,
             "first_downsample_ms": prepared.first_downsample_ms,
             "runner_voxel2_ms": voxel2_ms,
+            "runner_outlier_filter_ms": outlier_filter_ms,
             "runner_final_selection_ms": selection_ms,
             "runner_stage_scale_ms": stage_scale_ms,
             "runner_encode_ms": encode_ms,
@@ -442,13 +485,33 @@ def run(config: dict) -> None:
             f"cand {candidate_count:5d} -> {args.fps_points:4d} "
             f"[{target_info.get('selection_mode')}] | "
             f"V1 {prepared.first_downsample_ms:5.2f}  "
-            f"V2 {voxel2_ms:5.2f}  select {selection_ms:5.2f}  "
+            f"V2 {voxel2_ms:5.2f}  filter {outlier_filter_ms:5.2f}  "
+            f"select {selection_ms:5.2f}  "
             f"stage {stage_scale_ms:5.2f} enc {encode_ms:5.2f} dec {decode_ms:5.2f}  "
             f"runner {runner_model_total_ms:6.2f}  temporal {temporal_filter_ms:5.2f}  "
             f"recover {recovery_ms:6.2f}  overall {overall_wall_ms:7.2f} ms | "
             f"scale {estimator.runner.spatial_scale:5.2f} | "
             f"anchor EPE {anchor_flow_epe.mean():.5f}  first EPE {first_flow_epe.mean():.5f} m"
         )
+        if args.outlier_filter_enabled:
+            if isinstance(outlier_stats, dict):
+                support = outlier_stats.get("temporal_supported_fraction")
+                support_text = "n/a" if support is None else f"{float(support):.3f}"
+                print(
+                    "  outlier | "
+                    f"blocks {int(outlier_stats['component_count']):4d}, "
+                    f"largest {int(outlier_stats['largest_component_voxels']):5d} vox, "
+                    f"tiny removed {int(outlier_stats['tiny_removed_component_count']):3d}, "
+                    f"temporal candidates {int(outlier_stats['temporal_candidate_component_count']):3d}, "
+                    f"supported/rejected "
+                    f"{int(outlier_stats['temporal_supported_component_count'])}/"
+                    f"{int(outlier_stats['temporal_rejected_component_count'])}, "
+                    f"removed {int(outlier_stats['removed_component_count'])} blocks / "
+                    f"{int(outlier_stats['removed_voxel_count'])} vox, "
+                    f"support {support_text}"
+                )
+            else:
+                print("  outlier | bypassed because adaptive voxel-2 was not used")
 
         if rviz is not None and target_index % args.rviz_publish_every == 0:
             rviz.publish_pair(
@@ -485,6 +548,39 @@ def run(config: dict) -> None:
     print(f"Final anchors:                 {args.fps_points}")
     print(f"Frozen spatial scale:          {estimator.runner.spatial_scale:.6f}")
     print(f"Second voxel resolution:       {estimator.runner.second_voxel_size_m}")
+    if args.outlier_filter_enabled and outlier_frame_stats:
+        block_counts = np.asarray(
+            [int(x["component_count"]) for x in outlier_frame_stats],
+            dtype=np.float64,
+        )
+        removed_blocks = sum(
+            int(x["removed_component_count"]) for x in outlier_frame_stats
+        )
+        removed_voxels = sum(
+            int(x["removed_voxel_count"]) for x in outlier_frame_stats
+        )
+        temporal_candidates = sum(
+            int(x["temporal_candidate_component_count"])
+            for x in outlier_frame_stats
+        )
+        temporal_rejected = sum(
+            int(x["temporal_rejected_component_count"])
+            for x in outlier_frame_stats
+        )
+        print("\nOutlier-filter statistics")
+        print(
+            "Components/frame mean/median/max: "
+            f"{block_counts.mean():.1f} / {np.median(block_counts):.1f} / "
+            f"{block_counts.max():.0f}"
+        )
+        print(
+            "Removed blocks/voxels total:      "
+            f"{removed_blocks} / {removed_voxels}"
+        )
+        print(
+            "Temporal candidates/rejected:     "
+            f"{temporal_candidates} / {temporal_rejected}"
+        )
     if local_neighbor_frame_stats:
         local_mean = np.mean([x["mean"] for x in local_neighbor_frame_stats])
         local_median = np.median([x["median"] for x in local_neighbor_frame_stats])
@@ -502,6 +598,7 @@ def run(config: dict) -> None:
         ("h2d_ms", "Pinned H2D"),
         ("first_downsample_ms", "GPU first voxel"),
         ("runner_voxel2_ms", "Runner voxel-2"),
+        ("runner_outlier_filter_ms", "Runner outlier filter"),
         ("runner_final_selection_ms", "Runner final selection"),
         ("runner_stage_scale_ms", "Runner stage + scale"),
         ("runner_encode_ms", "Runner encode"),
@@ -541,6 +638,21 @@ def run(config: dict) -> None:
                 "fine": int(args.difflow_fine_iters),
             },
             "second_candidate_ratio": float(args.second_candidate_ratio),
+            "outlier_filter": {
+                "enabled": bool(args.outlier_filter_enabled),
+                "tiny_component_max_voxels": int(
+                    args.outlier_filter_tiny_component_max_voxels
+                ),
+                "max_small_component_fraction": float(
+                    args.outlier_filter_max_small_component_fraction
+                ),
+                "support_radius_voxels": int(
+                    args.outlier_filter_support_radius_voxels
+                ),
+                "min_supported_fraction": float(
+                    args.outlier_filter_min_supported_fraction
+                ),
+            },
             "recovery_backend": args.recovery_backend,
             "recovery_local_radius_sigma": float(args.recovery_local_radius_sigma),
             "recovery_local_hash_size_factor": float(args.recovery_local_hash_size_factor),

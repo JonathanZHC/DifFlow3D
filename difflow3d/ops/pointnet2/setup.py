@@ -21,6 +21,8 @@ sources = [
     'src/gaussian_recovery_gpu.cu',
     'src/anchor_motion.cpp',
     'src/anchor_motion_gpu.cu',
+    'src/voxel_components.cpp',
+    'src/voxel_components_gpu.cu',
 ]
 
 setup(

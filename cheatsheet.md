@@ -74,8 +74,16 @@ preprocessing:
   fps_points: 2048
   second_candidate_ratio: 1.1
   final_selection: uniform
-  auto_spatial_scale: true
-  target_model_volume: 2.0
+  outlier_filter:
+    enabled: true
+    tiny_component_max_voxels: 2
+    max_small_component_fraction: 0.005
+    support_radius_voxels: 1
+    min_supported_fraction: 0.30
+  auto_spatial_scale:
+    enable: true
+    target_model_volume: 2.0
+    fixed_spatial_scale: 1.0
 
 recovery:
   softmax_sigma_m: 0.025

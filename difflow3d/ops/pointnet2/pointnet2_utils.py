@@ -330,6 +330,112 @@ def has_anchor_velocity_kalman_op() -> bool:
     return hasattr(pointnet2, "anchor_kalman_update_wrapper")
 
 
+def has_voxel_component_filter_op() -> bool:
+    return hasattr(pointnet2, "voxel_component_filter_wrapper")
+
+
+@torch.no_grad()
+def voxel_component_keep_mask(
+    sorted_keys: torch.Tensor,
+    shifted_coords: torch.Tensor,
+    absolute_coords: torch.Tensor,
+    extents: torch.Tensor,
+    previous_absolute_coords: torch.Tensor,
+    *,
+    tiny_component_max_voxels: int,
+    max_small_component_voxels: int,
+    support_radius_voxels: int,
+    min_supported_fraction: float,
+    parents: torch.Tensor,
+    component_sizes: torch.Tensor,
+    supported_counts: torch.Tensor,
+    largest_component_size: torch.Tensor,
+    keep_mask: torch.Tensor,
+    statistics: torch.Tensor,
+) -> torch.Tensor:
+    """Classify spatial/temporal sparse voxel components entirely on CUDA.
+
+    The input keys must be unique and sorted in ascending order. Workspaces are
+    caller-owned so the streaming preprocessor can reuse them across frames.
+    """
+    if not has_voxel_component_filter_op():
+        raise RuntimeError(
+            "pointnet2_cuda was built without voxel component filtering; "
+            "run: bash scripts/build_pointnet2_ops.sh"
+        )
+    count = int(sorted_keys.shape[0])
+    if count < 1 or sorted_keys.ndim != 1 or sorted_keys.dtype != torch.int64:
+        raise ValueError("sorted_keys must be a non-empty int64 [N] tensor")
+    if (
+        shifted_coords.shape != (count, 3)
+        or shifted_coords.dtype != torch.int32
+    ):
+        raise ValueError("shifted_coords must be int32 [N,3]")
+    if absolute_coords.shape != (count, 3) or absolute_coords.dtype != torch.int32:
+        raise ValueError("absolute_coords must be int32 [N,3]")
+    if previous_absolute_coords.ndim != 2 or previous_absolute_coords.shape[1] != 3:
+        raise ValueError("previous_absolute_coords must have shape [M,3]")
+    if previous_absolute_coords.dtype != torch.int32:
+        raise ValueError("previous_absolute_coords must be int32")
+    if extents.numel() != 3 or extents.dtype != torch.int32:
+        raise ValueError("extents must contain three int32 values")
+    if sorted_keys.device.type != "cuda":
+        raise ValueError("voxel component filtering requires CUDA tensors")
+    tensors = (
+        shifted_coords,
+        absolute_coords,
+        extents,
+        previous_absolute_coords,
+        parents,
+        component_sizes,
+        supported_counts,
+        largest_component_size,
+        keep_mask,
+        statistics,
+    )
+    if any(tensor.device != sorted_keys.device for tensor in tensors):
+        raise ValueError("all voxel component tensors must share one CUDA device")
+    if (
+        parents.dtype != torch.int32
+        or component_sizes.dtype != torch.int32
+        or supported_counts.dtype != torch.int32
+    ):
+        raise ValueError("component workspaces must be int32")
+    if largest_component_size.dtype != torch.int32:
+        raise ValueError("largest_component_size must be int32")
+    if keep_mask.dtype != torch.bool:
+        raise ValueError("keep_mask must be bool")
+    if (
+        parents.numel() < count
+        or component_sizes.numel() < count
+        or supported_counts.numel() < count
+    ):
+        raise ValueError("component workspaces are smaller than the input")
+    if keep_mask.numel() < count or largest_component_size.numel() < 1:
+        raise ValueError("component output workspaces are too small")
+    if statistics.dtype != torch.int32 or statistics.numel() < 11:
+        raise ValueError("statistics must be an int32 workspace with 11 values")
+
+    pointnet2.voxel_component_filter_wrapper(
+        sorted_keys.contiguous(),
+        shifted_coords.contiguous(),
+        absolute_coords.contiguous(),
+        extents.contiguous(),
+        previous_absolute_coords.contiguous(),
+        int(tiny_component_max_voxels),
+        int(max_small_component_voxels),
+        int(support_radius_voxels),
+        float(min_supported_fraction),
+        parents,
+        component_sizes,
+        supported_counts,
+        largest_component_size,
+        keep_mask,
+        statistics,
+    )
+    return keep_mask[:count]
+
+
 def _validate_gaussian_inputs(
     queries: torch.Tensor,
     anchors: torch.Tensor,
@@ -552,4 +658,3 @@ def gaussian_softmax_recovery_local_track_aware(
         local_neighbor_counts,
     )
     return output, local_neighbor_counts
-
