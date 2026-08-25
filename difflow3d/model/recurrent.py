@@ -5,19 +5,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from difflow3d.ops.pointnet2 import pointnet2_utils
-from .encoder import _pointconv_from_context, _self_knn_context
 from .pointconv import (
     BidirectionalLayerFeatCosine,
     Conv1d,
     FlowEmbeddingLayer,
     PointWarping,
-    SceneFlowEstimatorResidual,
     SinusoidalPosEmb,
     cosine_beta_schedule,
-    index_points_group,
+    cross_block_apply,
+    cross_block_context,
+    group_channel_first,
     knn_point,
-    knn_point_cosine,
+    knn_point_cosine_prenorm,
     knn_point_with_relative,
+    l2_normalize_points,
 )
 
 scale = 1.0
@@ -44,10 +45,11 @@ class RecurrentUnit(nn.Module):
 
     def _prepare_cosine_neighbors(self, feat1, feat2):
         half_neighbors = self.flow_nei // 2
-        feat1_n = feat1.permute(0, 2, 1)
-        feat2_n = feat2.permute(0, 2, 1)
-        cosine_12 = knn_point_cosine(half_neighbors, feat2_n, feat1_n)
-        cosine_21 = knn_point_cosine(half_neighbors, feat1_n, feat2_n)
+        # Normalise each feature set once; both directions reuse them.
+        feat1_n = l2_normalize_points(feat1.permute(0, 2, 1))
+        feat2_n = l2_normalize_points(feat2.permute(0, 2, 1))
+        cosine_12 = knn_point_cosine_prenorm(half_neighbors, feat2_n, feat1_n)
+        cosine_21 = knn_point_cosine_prenorm(half_neighbors, feat1_n, feat2_n)
         return (cosine_12, cosine_21)
 
     def _prepare_spatial_neighbors(self, pc1, pc2):
@@ -60,49 +62,43 @@ class RecurrentUnit(nn.Module):
 
     @staticmethod
     def _prepare_combined_cross_context(xyz1, xyz2, cosine_idx, spatial_idx):
-        """Combine neighbor indices and cache geometry shared by cross blocks."""
+        """Combine neighbor indices and cache geometry shared by cross blocks.
+
+        Returns int32 indices and ``[B,3,N1,K]`` offsets in the grouping kernel's
+        native layout (see ``pointconv.cross_block_context``).
+        """
         combined_idx = torch.cat((cosine_idx, spatial_idx), dim=-1)
-        xyz1_n = xyz1.permute(0, 2, 1)
-        xyz2_n = xyz2.permute(0, 2, 1)
-        neighbor_xyz = index_points_group(xyz2_n, combined_idx)
-        direction_xyz = neighbor_xyz - xyz1_n.unsqueeze(2)
-        return (combined_idx, direction_xyz)
+        return cross_block_context(xyz1, xyz2, combined_idx)
 
     @staticmethod
-    def _cross_from_combined_context(module, points1, points2, combined_idx, direction_xyz):
+    def _cross_from_combined_context(module, points1, points2, context):
         """Exact cross math using cached indices and geometric offsets."""
-        points1_n = points1.permute(0, 2, 1)
-        points2_n = points2.permute(0, 2, 1)
-        neighbor_count = combined_idx.shape[-1]
-        grouped_points2 = index_points_group(points2_n, combined_idx).permute(0, 3, 2, 1)
-        grouped_points1 = points1_n.unsqueeze(2).expand(-1, -1, neighbor_count, -1).permute(0, 3, 2, 1)
-        direction_features = module.pos(direction_xyz.permute(0, 3, 2, 1))
-        new_points = module.relu(module.bn(grouped_points2 + grouped_points1 + direction_features))
-        for conv in module.mlp:
-            new_points = conv(new_points)
-        return F.max_pool2d(new_points, (new_points.size(2), 1)).squeeze(2)
+        return cross_block_apply(
+            points1, points2, module.pos, module.mlp, module.bn, module.relu, context
+        )
 
     def _bidirectional_fast(self, c_feat1, c_feat2, context_12, context_21):
-        combined_12, direction_12 = context_12
-        combined_21, direction_21 = context_21
-        feat1_new = self._cross_from_combined_context(self.bid, self.bid.cross_t11(c_feat1), self.bid.cross_t22(c_feat2), combined_12, direction_12)
-        feat2_new = self._cross_from_combined_context(self.bid, self.bid.cross_t11(c_feat2), self.bid.cross_t22(c_feat1), combined_21, direction_21)
+        feat1_new = self._cross_from_combined_context(self.bid, self.bid.cross_t11(c_feat1), self.bid.cross_t22(c_feat2), context_12)
+        feat2_new = self._cross_from_combined_context(self.bid, self.bid.cross_t11(c_feat2), self.bid.cross_t22(c_feat1), context_21)
         return (feat1_new, feat2_new)
 
     def _flow_embedding_fast(self, feat1_new, feat2_new, context_12):
-        combined_12, direction_12 = context_12
         points1 = self.fe.conv1(feat1_new)
         points2 = self.fe.conv2(feat2_new)
-        return self._cross_from_combined_context(self.fe, points1, points2, combined_12, direction_12)
+        return self._cross_from_combined_context(self.fe, points1, points2, context_12)
 
-    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5):
+    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5, self_knn_context=None):
         c_feat1 = torch.cat([feat1, feat1_new], dim=1)
         c_feat2 = torch.cat([feat2, feat2_new], dim=1)
         flows = []
         use_fast_cross = not self.training and self._supports_fast_cross_path()
         if use_fast_cross:
             cosine_12, cosine_21 = self._prepare_cosine_neighbors(feat1, feat2)
-            flow_neighbor_context = self.flow._prepare_neighbor_context(pc1, pc1)
+            if self_knn_context is not None:
+                # Source-frame-only geometry precomputed in encode_frame.
+                flow_neighbor_context = self.flow._neighbor_context_from_knn(*self_knn_context)
+            else:
+                flow_neighbor_context = self.flow._prepare_neighbor_context(pc1, pc1)
             flow_time_per_point = self.flow._prepare_eval_time_per_point(up_flow)
         else:
             cosine_12 = cosine_21 = None
@@ -226,15 +222,22 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
         self._eval_time_cache.clear()
         return super()._apply(fn)
 
+    @staticmethod
+    def _neighbor_context_from_knn(knn_idx, relative_xyz):
+        """``([B,N,K] idx, [B,N,K,3] rel)`` -> (int32 idx, ``[B,3,N,K]`` rel)."""
+        return (
+            knn_idx.int().contiguous(),
+            relative_xyz.permute(0, 3, 1, 2).contiguous(),
+        )
+
     def _prepare_neighbor_context(self, xyz1, xyz2):
         """Prepare geometry-only self-neighborhood data reusable across calls."""
-        batch_size, coordinate_channels, point_count = xyz1.shape
         xyz1_n = xyz1.permute(0, 2, 1).contiguous()
         xyz2_n = xyz2.permute(0, 2, 1).contiguous()
         knn_idx, direction_xyz = knn_point_with_relative(
             self.nsample, xyz2_n, xyz1_n
         )
-        return (knn_idx, direction_xyz)
+        return self._neighbor_context_from_knn(knn_idx, direction_xyz)
 
     def _prepare_eval_time_per_point(self, flow):
         """Return cached deterministic one-step DDIM time features.
@@ -252,24 +255,29 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
             return cached
         with torch.no_grad():
             t = torch.full((batch_size,), self.timesteps - 1, device=flow.device, dtype=torch.long)
-            cached = self.time_mlp(t).unsqueeze(1).expand(-1, point_count, -1).detach()
+            # Channel-first [B,64,N] so it broadcasts along K in the GRU's
+            # [B,C,N,K] layout without a transpose.
+            cached = self.time_mlp(t).unsqueeze(2).expand(-1, -1, point_count).contiguous().detach()
         self._eval_time_cache[cache_key] = cached
         return cached
 
     def _gru_update_eval(self, points1, points2, delta_flow, delta_certainty, time_per_point, neighbor_context):
-        knn_idx, direction_xyz = neighbor_context
-        batch_size, _, point_count = points1.shape
-        grouped_points2 = index_points_group(points2.permute(0, 2, 1), knn_idx)
-        time_grouped = time_per_point.unsqueeze(2).expand(-1, -1, self.nsample, -1)
-        delta_flow_grouped = delta_flow.permute(0, 2, 1).unsqueeze(2).expand(-1, -1, self.nsample, -1)
-        delta_certainty_grouped = delta_certainty.permute(0, 2, 1).unsqueeze(2).expand(-1, -1, self.nsample, -1)
-        new_points = torch.cat([grouped_points2, direction_xyz, delta_certainty_grouped, delta_flow_grouped, time_grouped], dim=-1).permute(0, 3, 2, 1)
+        # Everything below is in [B,C,N,K] (grouping-native) layout: one
+        # contiguous concat feeds the r/z/h conv chains directly instead of a
+        # permuted view that aten had to materialise three times.
+        knn_idx_int, direction_xyz = neighbor_context
+        nsample = self.nsample
+        grouped_points2 = group_channel_first(points2, knn_idx_int)
+        time_grouped = time_per_point.unsqueeze(3).expand(-1, -1, -1, nsample)
+        delta_flow_grouped = delta_flow.unsqueeze(3).expand(-1, -1, -1, nsample)
+        delta_certainty_grouped = delta_certainty.unsqueeze(3).expand(-1, -1, -1, nsample)
+        new_points = torch.cat([grouped_points2, direction_xyz, delta_certainty_grouped, delta_flow_grouped, time_grouped], dim=1)
         point1_graph = points1
         r = new_points
         for i, conv in enumerate(self.mlp_r_convs):
             r = conv(r)
             if i == 0:
-                r = r + self.fuse_r(point1_graph).unsqueeze(2)
+                r = r + self.fuse_r(point1_graph).unsqueeze(3)
             if self.bn:
                 r = self.mlp_r_bns[i](r)
             if i == len(self.mlp_r_convs) - 1:
@@ -280,7 +288,7 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
         for i, conv in enumerate(self.mlp_z_convs):
             z = conv(z)
             if i == 0:
-                z = z + self.fuse_z(point1_graph).unsqueeze(2)
+                z = z + self.fuse_z(point1_graph).unsqueeze(3)
             if self.bn:
                 z = self.mlp_z_bns[i](z)
             if i == len(self.mlp_z_convs) - 1:
@@ -288,9 +296,9 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
             else:
                 z = self.relu(z)
             if i == len(self.mlp_z_convs) - 2:
-                z = torch.max(z, -2)[0].unsqueeze(-2)
-        z = z.squeeze(-2)
-        point1_expand = self.fuse_r_o(r * point1_graph.unsqueeze(2))
+                z = z.amax(dim=3, keepdim=True)
+        z = z.squeeze(3)
+        point1_expand = self.fuse_r_o(r * point1_graph.unsqueeze(3))
         h = new_points
         for i, conv in enumerate(self.mlp_h_convs):
             h = conv(h)
@@ -303,8 +311,8 @@ class DiffusionSceneFlowGRUResidual(nn.Module):
             else:
                 h = self.relu(h)
             if i == len(self.mlp_h_convs) - 2:
-                h = torch.max(h, -2)[0].unsqueeze(-2)
-        h = h.squeeze(-2)
+                h = h.amax(dim=3, keepdim=True)
+        h = h.squeeze(3)
 
         # Keep recurrent-state tensors dtype-consistent at this boundary.
         # These checks are no-ops in the FP32 deployment path.

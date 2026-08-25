@@ -238,11 +238,16 @@ class AdaptivePointPreprocessor:
                 dtype=torch.int64,
             )
         )
-        _, track_ranks = torch.unique(
-            voxel_ids,
-            sorted=True,
-            return_inverse=True,
-        )
+        # Dense rank of each point's track id (== torch.unique(return_inverse)),
+        # computed with sort + cumsum + scatter so it needs no host sync.
+        # torch.unique on CUDA copies the unique count back to the host, which
+        # drained the whole stream once per stage_world.
+        sorted_ids, id_order = torch.sort(voxel_ids)
+        id_new = torch.ones_like(sorted_ids, dtype=torch.bool)
+        id_new[1:] = sorted_ids[1:] != sorted_ids[:-1]
+        ranks_sorted = torch.cumsum(id_new.to(torch.int64), dim=0) - 1
+        track_ranks = torch.empty_like(voxel_ids)
+        track_ranks.scatter_(0, id_order, ranks_sorted)
 
         # Separate tracks by two empty x slices. The unchanged 3-D CUDA
         # component operator can then label each instance independently while
@@ -260,11 +265,15 @@ class AdaptivePointPreprocessor:
         sorted_keys, order = torch.sort(keys)
         keep = torch.ones_like(sorted_keys, dtype=torch.bool)
         keep[1:] = sorted_keys[1:] != sorted_keys[:-1]
-        indices = order[keep]
+        # One nonzero() (the single unavoidable host sync: the candidate count
+        # drives the selection branch downstream) shared by both compactions,
+        # instead of two independent boolean-mask gathers.
+        keep_index = keep.nonzero(as_tuple=True)[0]
+        indices = order.index_select(0, keep_index)
         sorted_group_ids = torch.cumsum(keep.to(torch.int64), dim=0) - 1
         input_to_candidate = torch.empty_like(order)
         input_to_candidate.scatter_(0, order, sorted_group_ids)
-        unique_keys = sorted_keys[keep].contiguous()
+        unique_keys = sorted_keys.index_select(0, keep_index).contiguous()
         candidate_coords = (
             component_coords.index_select(0, indices).to(torch.int32).contiguous()
         )

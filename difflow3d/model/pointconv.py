@@ -88,8 +88,24 @@ def cosine_distance(src, dst):
 
     return dist
 
+USE_FUSED_KNN = True
+USE_FUSED_CROSS_BLOCK = True
+
+
 def knn_point(nsample, xyz, new_xyz):
-    """Exact Euclidean KNN using the measured-fast PyTorch GEMM + top-k path."""
+    """Exact Euclidean KNN.
+
+    3-D coordinate queries on CUDA use the fused register-heap kernel
+    (``difflow3d.ops.fused_knn``); everything else falls back to the GEMM +
+    top-k path.
+    """
+    if USE_FUSED_KNN and not torch.is_grad_enabled():
+        try:
+            from difflow3d.ops import fused_knn
+        except Exception:  # pragma: no cover
+            fused_knn = None
+        if fused_knn is not None and fused_knn.available(new_xyz, xyz, int(nsample)):
+            return fused_knn.knn_indices(new_xyz, xyz, int(nsample))
     sqrdists = square_distance(new_xyz, xyz)
     _, group_idx = torch.topk(
         sqrdists, int(nsample), dim=-1, largest=False, sorted=False
@@ -104,19 +120,72 @@ def knn_point_with_relative(nsample, xyz, new_xyz):
     return idx, grouped_xyz - new_xyz.unsqueeze(2)
 
 
-def knn_point_cosine(nsample, xyz, new_xyz):
-    """Cosine KNN without materializing the extra ``1 - similarity`` tensor."""
-    query = new_xyz / torch.sqrt(
-        torch.sum(new_xyz ** 2, -1, keepdim=True) + 1.0e-8
-    )
-    reference = xyz / torch.sqrt(
-        torch.sum(xyz ** 2, -1, keepdim=True) + 1.0e-8
-    )
-    similarity = torch.bmm(query, reference.transpose(1, 2))
+def l2_normalize_points(points):
+    """``[B,N,C]`` -> unit-norm rows, matching ``knn_point_cosine``'s epsilon."""
+    return points / torch.sqrt(torch.sum(points ** 2, -1, keepdim=True) + 1.0e-8)
+
+
+def knn_point_cosine_prenorm(nsample, reference_n, query_n):
+    """Cosine KNN on already L2-normalized ``[B,N,C]`` rows (bmm + topk only)."""
+    similarity = torch.bmm(query_n, reference_n.transpose(1, 2))
     _, group_idx = torch.topk(
         similarity, int(nsample), dim=-1, largest=True, sorted=False
     )
     return group_idx
+
+
+def knn_point_cosine(nsample, xyz, new_xyz):
+    """Cosine KNN without materializing the extra ``1 - similarity`` tensor."""
+    return knn_point_cosine_prenorm(
+        nsample, l2_normalize_points(xyz), l2_normalize_points(new_xyz)
+    )
+
+
+def group_channel_first(points_cf, knn_idx_int):
+    """Gather ``[B,C,N2]`` features at ``[B,N1,K]`` int32 indices -> ``[B,C,N1,K]``.
+
+    This is the grouping kernel's native output layout. Keeping cross-block
+    math in it avoids the transposed ``[B,C,K,N]`` views that made every
+    subsequent elementwise op read one operand with a 128-byte stride.
+    """
+    if points_cf.dtype != torch.float32:
+        points_cf = points_cf.float()
+    return pointnet2_utils.grouping_operation(points_cf.contiguous(), knn_idx_int)
+
+
+def cross_block_context(xyz1_cf, xyz2_cf, combined_idx):
+    """Shared geometry for cross blocks: int32 indices + ``[B,3,N1,K]`` offsets."""
+    idx_int = combined_idx.int().contiguous()
+    neighbor_xyz = group_channel_first(xyz2_cf, idx_int)
+    direction_xyz = neighbor_xyz - xyz1_cf.unsqueeze(3)
+    return idx_int, direction_xyz
+
+
+def cross_block_apply(points1_cf, points2_cf, pos, mlp, bn, relu, context):
+    """``relu(bn(group(points2) + points1 + pos(direction)))`` -> mlp -> max over K.
+
+    Exact math of ``CrossLayerLightFeatCosine.cross`` after the KNN, evaluated in
+    ``[B,C,N,K]`` layout (1x1 convs, BN and the max over K are layout-agnostic).
+    """
+    idx_int, direction_xyz = context
+    new_points = None
+    if USE_FUSED_CROSS_BLOCK and not torch.is_grad_enabled():
+        try:
+            from difflow3d.ops import fused_cross_block
+        except Exception:  # pragma: no cover
+            fused_cross_block = None
+        if fused_cross_block is not None and fused_cross_block.supported(
+            pos, bn, relu, points1_cf, points2_cf, idx_int, direction_xyz
+        ):
+            new_points = fused_cross_block.cross_prologue(
+                pos, relu, points1_cf, points2_cf, idx_int, direction_xyz
+            )
+    if new_points is None:
+        grouped_points2 = group_channel_first(points2_cf, idx_int)
+        new_points = relu(bn(grouped_points2 + points1_cf.unsqueeze(3) + pos(direction_xyz)))
+    for conv in mlp:
+        new_points = conv(new_points)
+    return new_points.amax(dim=3)
 
 def index_points_gather(points, fps_idx):
     """
@@ -412,6 +481,9 @@ class CrossLayerLightFeatCosine(nn.Module):
         # _, feat1_final = self.fe2_layer(pc1, pc2, feat1_new, feat2_new)
         # flow1 = self.flow(feat1_final)
 
+        if not self.training:
+            return self._forward_eval_fast(pc1, pc2, feat1, feat2, knn1, knn2)
+
         feat1_new = self.cross(pc1, pc2, self.cross_t11(feat1),  self.cross_t22(feat2), knn1, knn2, self.pos1, self.mlp1, self.bn1)
         feat1_new = self.cross_t1(feat1_new)
         feat2_new = self.cross(pc2, pc1, self.cross_t11(feat2), self.cross_t22(feat1), knn2, knn1, self.pos1, self.mlp1, self.bn1)
@@ -419,6 +491,45 @@ class CrossLayerLightFeatCosine(nn.Module):
 
         feat1_final = self.cross(pc1, pc2, feat1_new, feat2_new, knn1, knn2, self.pos2, self.mlp2, self.bn2)
 
+        return feat1_new, feat2_new, feat1_final
+
+    def _forward_eval_fast(self, pc1, pc2, feat1, feat2, knn1, knn2):
+        """Same math as ``forward`` with the neighbourhoods computed once.
+
+        The third ``cross`` call receives exactly the same ``pc1, pc2, knn1, knn2``
+        as the first, so its cosine/spatial KNN, xyz gathers and offsets are
+        duplicates; the cosine features are normalised once instead of six times.
+        """
+        half = self.nsample // 2
+        knn1_n = l2_normalize_points(knn1.permute(0, 2, 1))
+        knn2_n = l2_normalize_points(knn2.permute(0, 2, 1))
+        xyz1_n = pc1.permute(0, 2, 1)
+        xyz2_n = pc2.permute(0, 2, 1)
+
+        idx_12 = torch.cat(
+            (knn_point_cosine_prenorm(half, knn2_n, knn1_n), knn_point(half, xyz2_n, xyz1_n)),
+            dim=-1,
+        )
+        idx_21 = torch.cat(
+            (knn_point_cosine_prenorm(half, knn1_n, knn2_n), knn_point(half, xyz1_n, xyz2_n)),
+            dim=-1,
+        )
+        context_12 = cross_block_context(pc1, pc2, idx_12)
+        context_21 = cross_block_context(pc2, pc1, idx_21)
+
+        feat1_new = cross_block_apply(
+            self.cross_t11(feat1), self.cross_t22(feat2),
+            self.pos1, self.mlp1, self.bn1, self.relu, context_12,
+        )
+        feat1_new = self.cross_t1(feat1_new)
+        feat2_new = cross_block_apply(
+            self.cross_t11(feat2), self.cross_t22(feat1),
+            self.pos1, self.mlp1, self.bn1, self.relu, context_21,
+        )
+        feat2_new = self.cross_t2(feat2_new)
+        feat1_final = cross_block_apply(
+            feat1_new, feat2_new, self.pos2, self.mlp2, self.bn2, self.relu, context_12,
+        )
         return feat1_new, feat2_new, feat1_final
 
 class BidirectionalLayerFeatCosine(nn.Module):

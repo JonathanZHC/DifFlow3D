@@ -3,7 +3,13 @@
 import torch
 import torch.nn as nn
 
-from .encoder import EncodedFrame, PointConvEncoder, _pointconv_from_context, _self_knn_context
+from .encoder import (
+    EncodedFrame,
+    PointConvEncoder,
+    _pointconv_from_context,
+    _self_knn_context,
+    subset_knn_context,
+)
 from .recurrent import RecurrentUnit
 from .pointconv import (
     Conv1d,
@@ -14,6 +20,15 @@ from .pointconv import (
 )
 
 scale = 1.0
+# With 1024 input points the encoder reuses level 0 as level 1, so the L1->L0
+# 3-NN "upsample" maps a point set onto itself. Architecturally that is the
+# identity, and skipping it removes five gathers per decode. The previous code
+# still ran it, and because its distances are computed in the cancellation form
+# |a|^2+|b|^2-2ab the self-distance came out as ~3e-4 instead of 0, i.e. it was
+# an accidental ~1% smoothing with the two nearest neighbours. Set to False to
+# reproduce that legacy behaviour exactly (fine-flow difference <= ~1e-3, about
+# 10x below the diffusion noise floor).
+IDENTITY_UPSAMPLE_L1_TO_L0 = True
 
 class PointConvBidirection(nn.Module):
     """DifFlow3D with split encode/decode APIs for streaming reuse."""
@@ -121,11 +136,20 @@ class PointConvBidirection(nn.Module):
         weights = inverse / inverse.sum(dim=2, keepdim=True)
         return indices, weights
 
+    def _scaled(self, value: torch.Tensor) -> torch.Tensor:
+        """``self.scale * value`` without launching a kernel when scale == 1."""
+        if float(self.scale) == 1.0:
+            return value
+        return self.scale * value
+
     @staticmethod
     def _apply_upsample_context(
         sparse_values: torch.Tensor,
-        context: tuple[torch.Tensor, torch.Tensor],
+        context: tuple[torch.Tensor, torch.Tensor] | None,
     ) -> torch.Tensor:
+        if context is None:
+            # Identity map: sparse and dense levels are the same point set.
+            return sparse_values
         indices, weights = context
         grouped = index_points_group(
             sparse_values.permute(0, 2, 1),
@@ -150,10 +174,11 @@ class PointConvBidirection(nn.Module):
 
         xyz_cf = xyz.permute(0, 2, 1)
         color_cf = color.permute(0, 2, 1)
-        points, features, indices = self.encoder(
+        (points, features, indices), level0_knn = self.encoder.forward_with_context(
             xyz_cf,
             color_cf,
         )
+        same_l0_l1 = points[0] is points[1]
 
         context_43 = self._prepare_upsample_context(
             points[3],
@@ -167,10 +192,26 @@ class PointConvBidirection(nn.Module):
             points[1],
             points[2],
         )
-        context_10 = self._prepare_upsample_context(
-            points[0],
-            points[1],
+        # See IDENTITY_UPSAMPLE_L1_TO_L0 above.
+        context_10 = (
+            None
+            if same_l0_l1 and IDENTITY_UPSAMPLE_L1_TO_L0
+            else self._prepare_upsample_context(points[0], points[1])
         )
+
+        # Self 9-NN per level for the GRU / flow estimators (source-frame-only).
+        # Levels 0/1 come from the encoder's already computed 32-NN; levels 2/3
+        # are computed fresh once per frame instead of once per decode.
+        gru_neighbors = int(self.recurrent0.flow.nsample)
+        if level0_knn is not None and int(level0_knn[0].shape[2]) >= gru_neighbors:
+            self_knn_l0 = subset_knn_context(level0_knn[0], level0_knn[1], gru_neighbors)
+        else:
+            self_knn_l0 = _self_knn_context(points[0], gru_neighbors)
+        self_knn_l1 = self_knn_l0 if same_l0_l1 else _self_knn_context(points[1], gru_neighbors)
+        self_knn_l2 = _self_knn_context(points[2], int(self.recurrent2.flow.nsample))
+        flow3_pointconvs = getattr(self.flow3, "pointconv_list", None)
+        flow3_neighbors = int(getattr(flow3_pointconvs[0], "nsample", 9)) if flow3_pointconvs else 9
+        self_knn_l3 = _self_knn_context(points[3], flow3_neighbors)
 
         feature_l4_to_l3 = self.deconv4_3(
             self._apply_upsample_context(
@@ -190,6 +231,7 @@ class PointConvBidirection(nn.Module):
                 context_10,
             ),
             feature_l4_to_l3=feature_l4_to_l3,
+            self_knn_contexts=(self_knn_l0, self_knn_l1, self_knn_l2, self_knn_l3),
         )
 
     def _flow3_eval(
@@ -197,6 +239,7 @@ class PointConvBidirection(nn.Module):
         xyz: torch.Tensor,
         features: torch.Tensor,
         cost_volume: torch.Tensor,
+        self_knn_context: tuple[torch.Tensor, torch.Tensor] | None = None,
     ):
         """SceneFlowEstimatorResidual with one shared self-KNN context."""
         pointconvs = getattr(self.flow3, "pointconv_list", None)
@@ -205,10 +248,13 @@ class PointConvBidirection(nn.Module):
 
         first = pointconvs[0]
         neighbors = int(getattr(first, "nsample", 9))
-        indices, relative_xyz = _self_knn_context(
-            xyz,
-            neighbors,
-        )
+        if self_knn_context is not None and int(self_knn_context[0].shape[2]) == neighbors:
+            indices, relative_xyz = self_knn_context
+        else:
+            indices, relative_xyz = _self_knn_context(
+                xyz,
+                neighbors,
+            )
 
         new_points = torch.cat(
             (features, cost_volume),
@@ -283,10 +329,16 @@ class PointConvBidirection(nn.Module):
             feat2s[3],
         )
 
+        self_knn = source.self_knn_contexts
+        knn_l0, knn_l1, knn_l2, knn_l3 = (
+            self_knn if len(self_knn) == 4 else (None, None, None, None)
+        )
+
         feat3, flow3, certainty3 = self._flow3_eval(
             pc1s[3],
             feat1s[3],
             cross3,
+            self_knn_context=knn_l3,
         )
 
         feat1_l3_2 = self.deconv3_2(
@@ -303,11 +355,11 @@ class PointConvBidirection(nn.Module):
         )
 
         up_flow2 = self._apply_upsample_context(
-            self.scale * flow3,
+            self._scaled(flow3),
             source_32,
         )
         up_certainty2 = self._apply_upsample_context(
-            self.scale * certainty3,
+            self._scaled(certainty3),
             source_32,
         )
         up_feat2 = self._apply_upsample_context(
@@ -333,6 +385,7 @@ class PointConvBidirection(nn.Module):
             None,
             up_certainty2,
             uncertainty,
+            self_knn_context=knn_l2,
         )
 
         feat1_l2_1 = self.deconv2_1(
@@ -349,11 +402,11 @@ class PointConvBidirection(nn.Module):
         )
 
         up_flow1 = self._apply_upsample_context(
-            self.scale * flows2[-1],
+            self._scaled(flows2[-1]),
             source_21,
         )
         up_certainty1 = self._apply_upsample_context(
-            self.scale * certainty2,
+            self._scaled(certainty2),
             source_21,
         )
         up_feat1 = self._apply_upsample_context(
@@ -379,6 +432,7 @@ class PointConvBidirection(nn.Module):
             None,
             up_certainty1,
             uncertainty,
+            self_knn_context=knn_l1,
         )
 
         feat1_l1_0 = self.deconv1_0(
@@ -395,11 +449,11 @@ class PointConvBidirection(nn.Module):
         )
 
         up_flow0 = self._apply_upsample_context(
-            self.scale * flows1[-1],
+            self._scaled(flows1[-1]),
             source_10,
         )
         up_certainty0 = self._apply_upsample_context(
-            self.scale * certainty1,
+            self._scaled(certainty1),
             source_10,
         )
         up_feat0 = self._apply_upsample_context(
@@ -425,6 +479,7 @@ class PointConvBidirection(nn.Module):
             None,
             up_certainty0,
             uncertainty,
+            self_knn_context=knn_l0,
         )
 
         flows = [

@@ -58,10 +58,34 @@ class EncodedFrame(NamedTuple):
     features: tuple[torch.Tensor, ...]
     fps_indices: tuple[torch.Tensor, ...]
     upsample_contexts: tuple[
-        tuple[torch.Tensor, torch.Tensor],
+        tuple[torch.Tensor, torch.Tensor] | None,
         ...,
     ]
     feature_l4_to_l3: torch.Tensor
+    # Per-level self 9-NN (indices [B,N,9], relative xyz [B,N,9,3]) for levels
+    # 0..3. Source-frame-only geometry used by the GRU/flow estimators; computed
+    # once per frame here instead of once per decode (twice at 1024 points).
+    self_knn_contexts: tuple[tuple[torch.Tensor, torch.Tensor], ...] = ()
+
+
+def subset_knn_context(
+    indices: torch.Tensor,
+    relative_xyz: torch.Tensor,
+    neighbors: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Derive the exact ``neighbors``-NN from a larger KNN context.
+
+    The k nearest of the 32 nearest are the k nearest overall, so this equals
+    ``knn_point_with_relative(neighbors, xyz, xyz)`` (up to distance ties) while
+    reading the 393 KB ``relative_xyz`` instead of building a 1024x1024 matrix.
+    """
+    distances = torch.sum(relative_xyz * relative_xyz, dim=3)
+    _, selected = torch.topk(distances, int(neighbors), dim=2, largest=False, sorted=False)
+    sub_indices = torch.gather(indices, 2, selected)
+    sub_relative = torch.gather(
+        relative_xyz, 2, selected.unsqueeze(3).expand(-1, -1, -1, relative_xyz.shape[3])
+    )
+    return sub_indices, sub_relative
 
 
 class PointConvEncoder(nn.Module):
@@ -214,12 +238,19 @@ class PointConvEncoder(nn.Module):
             feat_l3_4,
         )
 
+        self._last_level0_context = (indices, relative_xyz)
         return (
             [xyz, pc_l1, pc_l2, pc_l3, pc_l4],
             [feat_l0, feat_l1, feat_l2, feat_l3, feat_l4],
             [fps_l1, fps_l2, fps_l3, fps_l4],
         )
 
+    def forward_with_context(self, xyz, color):
+        """``forward`` plus the level-0 32-NN context (indices, relative xyz)."""
+        outputs = self.forward(xyz, color)
+        context = self._last_level0_context
+        self._last_level0_context = None
+        return outputs, context
 
     def forward(self, xyz, color):
         if self.training:
