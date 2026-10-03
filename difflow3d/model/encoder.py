@@ -150,6 +150,32 @@ class PointConvEncoder(nn.Module):
             ).unsqueeze(0),
             persistent=False,
         )
+        # Dense inputs (>= this many points) select level 1 by evenly spaced
+        # indices instead of farthest-point sampling. Exact-count preprocessing
+        # must then hand over spatially sorted anchors (Morton order) so that
+        # the strided subset is spatially uniform. 0 disables (always FPS).
+        self.fast_top_level_min_points = 0
+        self._strided_l1_cache: dict[tuple[int, int, str], torch.Tensor] = {}
+
+    def _strided_l1_indices(
+        self,
+        batch_size: int,
+        point_count: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        key = (batch_size, point_count, str(device))
+        cached = self._strided_l1_cache.get(key)
+        if cached is None:
+            cached = (
+                torch.linspace(0.0, float(point_count - 1), 1024, device=device)
+                .round()
+                .to(torch.int32)
+                .unsqueeze(0)
+                .expand(batch_size, -1)
+                .contiguous()
+            )
+            self._strided_l1_cache[key] = cached
+        return cached
 
     def _identity_fps_indices(
         self,
@@ -212,9 +238,21 @@ class PointConvEncoder(nn.Module):
                 relative_xyz,
             )
         else:
+            fps_idx = None
+            point_count = int(xyz.shape[2])
+            if (
+                self.fast_top_level_min_points > 0
+                and point_count >= self.fast_top_level_min_points
+            ):
+                fps_idx = self._strided_l1_indices(
+                    int(xyz.shape[0]),
+                    point_count,
+                    xyz.device,
+                )
             pc_l1, feat_l1, fps_l1 = self.level1(
                 xyz,
                 feat_l0_1,
+                fps_idx=fps_idx,
             )
         feat_l1 = self.level1_0(feat_l1)
         feat_l1_2 = self.level1_1(feat_l1)

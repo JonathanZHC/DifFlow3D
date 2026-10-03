@@ -37,6 +37,16 @@ class DifFlow3DConfig:
     outlier_filter_min_component_size_ratio: float = 0.05
     enable_profiling: bool = False
     validate_finite: bool = False
+    # Exact anchor counts the runner captures graphs for (default: num_points
+    # only). Frames are reduced to the largest bucket <= their candidate count
+    # instead of being repeat-padded to num_points.
+    point_buckets: tuple[int, ...] | None = None
+    # Morton-sort the anchors (required by fast_top_level_min_points).
+    sort_anchors_morton: bool = False
+    # Dense-input shortcuts of the model (0 = off), see
+    # PointConvBidirection.configure_dense_points.
+    fast_top_level_min_points: int = 0
+    hier_cosine_min_points: int = 0
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,10 @@ class DifFlow3DInference:
             strict=config.strict_checkpoint,
         )
         self.model.to(self.device).eval()
+        self.model.configure_dense_points(
+            fast_top_level_min_points=config.fast_top_level_min_points,
+            hier_cosine_min_points=config.hier_cosine_min_points,
+        )
         if config.disable_bn_running_stats:
             for layer in self.model.modules():
                 if isinstance(
@@ -105,6 +119,8 @@ class DifFlow3DInference:
             ),
             enable_profiling=config.enable_profiling,
             validate_finite=config.validate_finite,
+            point_buckets=config.point_buckets,
+            sort_anchors_morton=config.sort_anchors_morton,
         )
 
     def reset(self) -> None:

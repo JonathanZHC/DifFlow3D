@@ -66,6 +66,8 @@ class PointConvBidirection(nn.Module):
         }
 
         self.encoder = PointConvEncoder(weightnet=weightnet)
+        # Dense-input options (see configure_dense_points); 0 = disabled.
+        self.hier_cosine_min_points = 0
 
         # recurrent0/1/2 operate at fine/middle/coarse resolution respectively.
         self.recurrent0 = RecurrentUnit(
@@ -117,6 +119,22 @@ class PointConvBidirection(nn.Module):
         self.deconv2_1 = Conv1d(128, 64)
         self.deconv1_0 = Conv1d(64, 32)
 
+
+    def configure_dense_points(
+        self,
+        *,
+        fast_top_level_min_points: int = 0,
+        hier_cosine_min_points: int = 0,
+    ) -> None:
+        """Enable the dense-input shortcuts for frames with at least that many points.
+
+        ``fast_top_level_min_points``: level 1 is an evenly spaced subset of the (Morton-sorted) input
+        instead of farthest-point sampling (saves the O(N * 1024) FPS kernel).
+        ``hier_cosine_min_points``: the fine level's feature-space KNN is searched hierarchically through
+        the level-1 matches (removes the O(N^2) similarity matrix). Both leave the weights untouched.
+        """
+        self.encoder.fast_top_level_min_points = int(fast_top_level_min_points)
+        self.hier_cosine_min_points = int(hier_cosine_min_points)
 
     @staticmethod
     def _prepare_upsample_context(
@@ -461,6 +479,14 @@ class PointConvBidirection(nn.Module):
             source_10,
         )
 
+        hier_context = None
+        if (
+            self.hier_cosine_min_points > 0
+            and int(pc1s[0].shape[2]) >= self.hier_cosine_min_points
+            and self.recurrent1.last_cosine is not None
+        ):
+            hier_context = (pc1s[1], pc2s[1], *self.recurrent1.last_cosine)
+
         (
             flows0,
             feat1_new_l0,
@@ -480,6 +506,7 @@ class PointConvBidirection(nn.Module):
             up_certainty0,
             uncertainty,
             self_knn_context=knn_l0,
+            hier_context=hier_context,
         )
 
         flows = [

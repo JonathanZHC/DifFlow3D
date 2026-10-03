@@ -125,6 +125,14 @@ def voxel_namespace(config: dict) -> SimpleNamespace:
         ),
         fps_points=int(prep["fps_points"]),
         final_selection=str(prep.get("final_selection", "uniform")),
+        point_buckets=(
+            tuple(int(v) for v in prep["point_buckets"])
+            if prep.get("point_buckets")
+            else None
+        ),
+        sort_anchors_morton=bool(prep.get("sort_anchors_morton", False)),
+        fast_top_level_min_points=int(model.get("fast_top_level_min_points", 0)),
+        hier_cosine_min_points=int(model.get("hier_cosine_min_points", 0)),
         difflow_iters=max(iterations.values()),  # legacy constructor fallback
         difflow_coarse_iters=iterations["coarse"],
         difflow_middle_iters=iterations["middle"],

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 import torch
 
 from difflow3d.model import EncodedFrame, PointConvBidirection
-from .preprocessing import AdaptivePointPreprocessor, PreprocessTimingEvents
+from .preprocessing import (
+    AdaptivePointPreprocessor,
+    PreparedModelInput,
+    PreprocessTimingEvents,
+)
 
 
 def configure_fast_inference(enable_tf32: bool = True) -> None:
@@ -22,6 +26,30 @@ class _ProfileEventPair:
     label: str
     start: torch.cuda.Event
     end: torch.cuda.Event
+
+
+@dataclass
+class _BucketGraphs:
+    """Static inputs, captured CUDA graphs and outputs for one exact point count."""
+
+    num_points: int
+    input_a: torch.Tensor
+    input_b: torch.Tensor
+    encode_graph_a: torch.cuda.CUDAGraph
+    encode_graph_b: torch.cuda.CUDAGraph
+    decode_graph_ab: torch.cuda.CUDAGraph
+    decode_graph_ba: torch.cuda.CUDAGraph
+    encoded_a: EncodedFrame | None = None
+    encoded_b: EncodedFrame | None = None
+    output_ab: object = None
+    output_ba: object = None
+    flow_ab: torch.Tensor | None = None
+    flow_ba: torch.Tensor | None = None
+    warped_ab: torch.Tensor | None = None
+    warped_ba: torch.Tensor | None = None
+
+    def input(self, slot: int) -> torch.Tensor:
+        return self.input_a if slot == 0 else self.input_b
 
 
 class DifFlow3DStreamingCudaGraphRunner:
@@ -56,6 +84,8 @@ class DifFlow3DStreamingCudaGraphRunner:
         outlier_filter_min_component_size_ratio: float = 0.05,
         enable_profiling: bool = False,
         validate_finite: bool = False,
+        point_buckets: tuple[int, ...] | list[int] | None = None,
+        sort_anchors_morton: bool = False,
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("Streaming CUDA Graph inference requires CUDA.")
@@ -127,57 +157,80 @@ class DifFlow3DStreamingCudaGraphRunner:
             ),
             enable_timing=self.enable_profiling,
             validate_finite=validate_finite,
+            point_buckets=point_buckets,
+            sort_anchors_morton=sort_anchors_morton,
         )
 
-        shape = (self.batch_size, self.num_points, 3)
-        self.input_a = torch.empty(shape, device=device, dtype=torch.float32)
-        self.input_b = torch.empty_like(self.input_a)
-
-        self.encode_graph_a = torch.cuda.CUDAGraph()
-        self.encode_graph_b = torch.cuda.CUDAGraph()
-        self.decode_graph_ab = torch.cuda.CUDAGraph()
-        self.decode_graph_ba = torch.cuda.CUDAGraph()
-
-        self.encoded_a: EncodedFrame | None = None
-        self.encoded_b: EncodedFrame | None = None
-        self.output_ab = None
-        self.output_ba = None
-        self.flow_ab: torch.Tensor | None = None
-        self.flow_ba: torch.Tensor | None = None
-        self.warped_ab: torch.Tensor | None = None
-        self.warped_ba: torch.Tensor | None = None
+        # One set of static inputs + graphs per exact point count ("bucket").
+        # Both frames of a streaming pair run at the same bucket: the smaller
+        # of their natural buckets; a frame already encoded at another bucket
+        # is re-selected from its candidates and re-encoded (one extra encode).
+        self._buckets: dict[int, _BucketGraphs] = {}
+        for count in self.preprocessor.point_buckets:
+            shape = (self.batch_size, int(count), 3)
+            input_a = torch.empty(shape, device=device, dtype=torch.float32)
+            self._buckets[int(count)] = _BucketGraphs(
+                int(count),
+                input_a,
+                torch.empty_like(input_a),
+                torch.cuda.CUDAGraph(),
+                torch.cuda.CUDAGraph(),
+                torch.cuda.CUDAGraph(),
+                torch.cuda.CUDAGraph(),
+            )
+        self._largest_bucket = self._buckets[max(self._buckets)]
 
         self._slot_selection_indices: list[torch.Tensor | None] = [None, None]
         self._slot_point_ids: list[torch.Tensor | None] = [None, None]
         self._slot_input_keep_masks: list[torch.Tensor | None] = [None, None]
         self._slot_preprocess_info: list[dict[str, object] | None] = [None, None]
+        self._slot_prepared: list[PreparedModelInput | None] = [None, None]
+        self._slot_bucket: list[int | None] = [None, None]
 
         self._next_slot = 0
         self._previous_slot: int | None = None
         self._last_source_slot: int | None = None
         self._last_target_slot: int | None = None
+        self._pair_bucket: int | None = None
+        self._pending_reencode_slot: int | None = None
+        self._current_bucket: _BucketGraphs | None = None
         self._current_output = None
         self._current_flow: torch.Tensor | None = None
         self._current_warped: torch.Tensor | None = None
+        self.reencode_count = 0
 
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
 
-        self._capture(int(warmup))
+        for bucket in self._buckets.values():
+            self._capture(bucket, int(warmup))
+
+    # Legacy single-size accessors (largest bucket).
+    @property
+    def input_a(self) -> torch.Tensor:
+        return self._largest_bucket.input_a
+
+    @property
+    def input_b(self) -> torch.Tensor:
+        return self._largest_bucket.input_b
+
+    @property
+    def point_buckets(self) -> tuple[int, ...]:
+        return tuple(self._buckets)
 
     # ------------------------------------------------------------------
     # CUDA graph capture
     # ------------------------------------------------------------------
 
-    def _warmup(self, count: int) -> None:
+    def _warmup(self, bucket: _BucketGraphs, count: int) -> None:
         current = torch.cuda.current_stream(self.device)
         setup = torch.cuda.Stream(device=self.device)
         setup.wait_stream(current)
 
         with torch.cuda.stream(setup), torch.inference_mode():
             for _ in range(count):
-                encoded_a = self.model.encode_frame(self.input_a, self.input_a)
-                encoded_b = self.model.encode_frame(self.input_b, self.input_b)
+                encoded_a = self.model.encode_frame(bucket.input_a, bucket.input_a)
+                encoded_b = self.model.encode_frame(bucket.input_b, bucket.input_b)
                 output_ab = self.model.decode_pair(
                     encoded_a, encoded_b, None, self.uncertainty
                 )
@@ -190,64 +243,64 @@ class DifFlow3DStreamingCudaGraphRunner:
         current.wait_stream(setup)
         torch.cuda.synchronize(self.device)
 
-    def _capture(self, warmup: int) -> None:
+    def _capture(self, bucket: _BucketGraphs, warmup: int) -> None:
         # RNG initialization deliberately occurs outside CUDA graph capture.
-        self.input_a.normal_(0.0, 0.25)
-        self.input_b.normal_(0.0, 0.25)
-        self._warmup(warmup)
+        bucket.input_a.normal_(0.0, 0.25)
+        bucket.input_b.normal_(0.0, 0.25)
+        self._warmup(bucket, warmup)
 
-        with torch.cuda.graph(self.encode_graph_a):
+        with torch.cuda.graph(bucket.encode_graph_a):
             with torch.inference_mode():
-                self.encoded_a = self.model.encode_frame(
-                    self.input_a,
-                    self.input_a,
+                bucket.encoded_a = self.model.encode_frame(
+                    bucket.input_a,
+                    bucket.input_a,
                 )
 
-        with torch.cuda.graph(self.encode_graph_b):
+        with torch.cuda.graph(bucket.encode_graph_b):
             with torch.inference_mode():
-                self.encoded_b = self.model.encode_frame(
-                    self.input_b,
-                    self.input_b,
+                bucket.encoded_b = self.model.encode_frame(
+                    bucket.input_b,
+                    bucket.input_b,
                 )
 
-        self.encode_graph_a.replay()
-        self.encode_graph_b.replay()
+        bucket.encode_graph_a.replay()
+        bucket.encode_graph_b.replay()
         torch.cuda.synchronize(self.device)
 
-        assert self.encoded_a is not None
-        assert self.encoded_b is not None
+        assert bucket.encoded_a is not None
+        assert bucket.encoded_b is not None
 
-        with torch.cuda.graph(self.decode_graph_ab):
+        with torch.cuda.graph(bucket.decode_graph_ab):
             with torch.inference_mode():
-                self.output_ab = self.model.decode_pair(
-                    self.encoded_a,
-                    self.encoded_b,
+                bucket.output_ab = self.model.decode_pair(
+                    bucket.encoded_a,
+                    bucket.encoded_b,
                     None,
                     self.uncertainty,
                 )
-                self.flow_ab = (
-                    self.output_ab[0][0][0]
+                bucket.flow_ab = (
+                    bucket.output_ab[0][0][0]
                     .permute(0, 2, 1)
                     .float()
                     .contiguous()
                 )
-                self.warped_ab = self.input_a + self.flow_ab
+                bucket.warped_ab = bucket.input_a + bucket.flow_ab
 
-        with torch.cuda.graph(self.decode_graph_ba):
+        with torch.cuda.graph(bucket.decode_graph_ba):
             with torch.inference_mode():
-                self.output_ba = self.model.decode_pair(
-                    self.encoded_b,
-                    self.encoded_a,
+                bucket.output_ba = self.model.decode_pair(
+                    bucket.encoded_b,
+                    bucket.encoded_a,
                     None,
                     self.uncertainty,
                 )
-                self.flow_ba = (
-                    self.output_ba[0][0][0]
+                bucket.flow_ba = (
+                    bucket.output_ba[0][0][0]
                     .permute(0, 2, 1)
                     .float()
                     .contiguous()
                 )
-                self.warped_ba = self.input_b + self.flow_ba
+                bucket.warped_ba = bucket.input_b + bucket.flow_ba
 
         torch.cuda.synchronize(self.device)
         self.reset()
@@ -402,27 +455,64 @@ class DifFlow3DStreamingCudaGraphRunner:
         if needs_scale_calibration:
             self.preprocessor.fit_spatial_scale(prepared.world_points)
 
-        scale = self.spatial_scale
         slot = self._next_slot
-        reference = self.next_input
+        previous = self._previous_slot
+        bucket = int(prepared.info["bucket"])
+        if previous is not None:
+            previous_prepared = self._slot_prepared[previous]
+            assert previous_prepared is not None
+            # The pair runs at the smaller natural bucket of its two frames.
+            previous_natural = self.preprocessor.bucket_for(
+                int(previous_prepared.candidates.shape[0])
+            )
+            bucket = min(bucket, previous_natural)
+            if self._slot_bucket[previous] != bucket:
+                self._stage_into(
+                    previous,
+                    self.preprocessor.refinalize(previous_prepared, bucket),
+                    bucket,
+                    record_profile=False,
+                )
+                self._pending_reencode_slot = previous
+                self.reencode_count += 1
+            if int(prepared.info["bucket"]) != bucket:
+                prepared = self.preprocessor.refinalize(prepared, bucket)
+        self._pair_bucket = bucket
+        self._stage_into(slot, prepared, bucket, record_profile=True)
+        return prepared.world_points
+
+    def _stage_into(
+        self,
+        slot: int,
+        prepared: PreparedModelInput,
+        bucket_count: int,
+        *,
+        record_profile: bool,
+    ) -> None:
+        scale = self.spatial_scale
+        bucket = self._buckets[bucket_count]
+        reference = bucket.input(slot)
         reference.copy_(prepared.world_points.unsqueeze(0), non_blocking=True)
         if scale != 1.0:
             reference.mul_(scale)
 
         # Shape checks are metadata-only and stay on the hot path. Expensive
         # finite checks are owned by calibration/debug mode in preprocessing.
-        if reference.shape != (self.batch_size, self.num_points, 3):
+        if reference.shape != (self.batch_size, bucket_count, 3):
             raise RuntimeError(
                 "Static CUDA input shape changed unexpectedly: "
                 f"{tuple(reference.shape)}."
             )
 
-        stage_end = None
-        if self.enable_profiling and self._profile_active:
-            stage_end = torch.cuda.Event(enable_timing=True)
-            stage_end.record()
-        self._record_preprocess_profile(prepared.timing_events, stage_end)
+        if record_profile:
+            stage_end = None
+            if self.enable_profiling and self._profile_active:
+                stage_end = torch.cuda.Event(enable_timing=True)
+                stage_end.record()
+            self._record_preprocess_profile(prepared.timing_events, stage_end)
 
+        self._slot_prepared[slot] = prepared
+        self._slot_bucket[slot] = bucket_count
         self._slot_selection_indices[slot] = prepared.selection_indices
         self._slot_point_ids[slot] = prepared.point_ids
         self._slot_input_keep_masks[slot] = prepared.input_keep_mask
@@ -434,7 +524,6 @@ class DifFlow3DStreamingCudaGraphRunner:
             )
             info["model_volume"] = float(info["world_volume"]) * scale**3
         self._slot_preprocess_info[slot] = info
-        return prepared.world_points
 
     def push_world(
         self,
@@ -458,13 +547,18 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._previous_slot = None
         self._last_source_slot = None
         self._last_target_slot = None
+        self._pair_bucket = None
+        self._pending_reencode_slot = None
+        self._current_bucket = None
+        self._slot_prepared = [None, None]
+        self._slot_bucket = [None, None]
         self._current_output = None
         self._current_flow = None
         self._current_warped = None
         self._profile_active = False
         self._profile_events = []
 
-    def _replay_encode(self, slot: int) -> None:
+    def _replay_encode(self, bucket: _BucketGraphs, slot: int) -> None:
         if self.enable_profiling and self._profile_active:
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
@@ -473,18 +567,25 @@ class DifFlow3DStreamingCudaGraphRunner:
             start = end = None
 
         if slot == 0:
-            self.encode_graph_a.replay()
+            bucket.encode_graph_a.replay()
         else:
-            self.encode_graph_b.replay()
+            bucket.encode_graph_b.replay()
 
         if end is not None and start is not None:
             end.record()
             self._profile_pair("encode_ms", start, end)
 
     def replay_next(self):
-        """Encode ``next_input`` and, after the first frame, decode one pair."""
+        """Encode the staged frame and, after the first frame, decode one pair."""
         current_slot = self._next_slot
-        self._replay_encode(current_slot)
+        if self._pair_bucket is None:
+            raise RuntimeError("stage_world()/push() must run before replay_next().")
+        bucket = self._buckets[self._pair_bucket]
+        if self._pending_reencode_slot is not None:
+            # The previous frame was re-selected at this pair's bucket.
+            self._replay_encode(bucket, self._pending_reencode_slot)
+            self._pending_reencode_slot = None
+        self._replay_encode(bucket, current_slot)
 
         if self._previous_slot is None:
             self._previous_slot = current_slot
@@ -493,6 +594,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         source_slot = self._previous_slot
         target_slot = current_slot
+        self._current_bucket = bucket
 
         if self.enable_profiling and self._profile_active:
             decode_start = torch.cuda.Event(enable_timing=True)
@@ -502,15 +604,15 @@ class DifFlow3DStreamingCudaGraphRunner:
             decode_start = decode_end = None
 
         if source_slot == 0 and target_slot == 1:
-            self.decode_graph_ab.replay()
-            self._current_output = self.output_ab
-            self._current_flow = self.flow_ab
-            self._current_warped = self.warped_ab
+            bucket.decode_graph_ab.replay()
+            self._current_output = bucket.output_ab
+            self._current_flow = bucket.flow_ab
+            self._current_warped = bucket.warped_ab
         elif source_slot == 1 and target_slot == 0:
-            self.decode_graph_ba.replay()
-            self._current_output = self.output_ba
-            self._current_flow = self.flow_ba
-            self._current_warped = self.warped_ba
+            bucket.decode_graph_ba.replay()
+            self._current_output = bucket.output_ba
+            self._current_flow = bucket.flow_ba
+            self._current_warped = bucket.warped_ba
         else:
             raise RuntimeError(
                 "Streaming graph slots did not alternate as expected."
@@ -527,8 +629,18 @@ class DifFlow3DStreamingCudaGraphRunner:
         return self._current_output
 
     def push(self, frame: torch.Tensor):
-        """Legacy fixed-size model-space copy + replay API."""
-        reference = self.next_input
+        """Legacy fixed-size model-space copy + replay API (one bucket per stream)."""
+        if frame.dim() != 3 or int(frame.shape[1]) not in self._buckets:
+            raise ValueError(
+                f"frame must have shape (batch, N, 3) with N in {self.point_buckets}; "
+                f"got {tuple(frame.shape)}."
+            )
+        count = int(frame.shape[1])
+        if self._pair_bucket is not None and self._pair_bucket != count:
+            raise ValueError(
+                "push() keeps one point count per stream; call reset() to change it."
+            )
+        reference = self._buckets[count].input(self._next_slot)
         if frame.device != reference.device:
             raise ValueError(
                 f"frame must be on {reference.device}, got {frame.device}."
@@ -539,6 +651,8 @@ class DifFlow3DStreamingCudaGraphRunner:
                 f"{reference.dtype}; got {tuple(frame.shape)} and {frame.dtype}."
             )
         reference.copy_(frame, non_blocking=True)
+        self._pair_bucket = count
+        self._slot_bucket[self._next_slot] = count
         return self.replay_next()
 
     # ------------------------------------------------------------------
@@ -566,14 +680,20 @@ class DifFlow3DStreamingCudaGraphRunner:
         return self._current_output
 
     def source_points(self) -> torch.Tensor:
-        if self._last_source_slot is None:
+        if self._last_source_slot is None or self._current_bucket is None:
             raise RuntimeError("At least two frames are required.")
-        return self.input_a if self._last_source_slot == 0 else self.input_b
+        return self._current_bucket.input(self._last_source_slot)
 
     def target_points(self) -> torch.Tensor:
-        if self._last_target_slot is None:
+        if self._last_target_slot is None or self._current_bucket is None:
             raise RuntimeError("At least two frames are required.")
-        return self.input_a if self._last_target_slot == 0 else self.input_b
+        return self._current_bucket.input(self._last_target_slot)
+
+    def current_point_count(self) -> int:
+        """Exact anchor count of the last decoded pair."""
+        if self._current_bucket is None:
+            raise RuntimeError("At least two frames are required.")
+        return int(self._current_bucket.num_points)
 
     # ------------------------------------------------------------------
     # World-space outputs

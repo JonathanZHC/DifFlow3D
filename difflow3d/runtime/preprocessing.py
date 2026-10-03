@@ -32,6 +32,13 @@ class PreparedModelInput:
     input_keep_mask: torch.Tensor
     info: dict[str, object]
     timing_events: PreprocessTimingEvents | None = None
+    # Exact-count input (voxel-2 output or the raw frame) kept so the frame can
+    # be re-selected at another bucket size (both frames of a streaming pair
+    # must share one point count). ``candidate_point_ids`` are per candidate.
+    candidates: torch.Tensor | None = None
+    candidate_indices: torch.Tensor | None = None
+    candidate_point_ids: torch.Tensor | None = None
+    candidate_info: dict[str, object] | None = None
 
 
 class AdaptivePointPreprocessor:
@@ -72,9 +79,17 @@ class AdaptivePointPreprocessor:
         outlier_filter_min_component_size_ratio: float = 0.05,
         enable_timing: bool = False,
         validate_finite: bool = False,
+        point_buckets: tuple[int, ...] | list[int] | None = None,
+        sort_anchors_morton: bool = False,
     ) -> None:
         if num_points < 1024:
             raise ValueError("DifFlow3D requires num_points >= 1024.")
+        buckets = sorted({int(value) for value in (point_buckets or (num_points,))})
+        if buckets[0] < 1024 or buckets[-1] > num_points:
+            raise ValueError(
+                "point_buckets must lie in [1024, num_points]; "
+                f"got {buckets} with num_points={num_points}."
+            )
         if second_base_voxel_size_m <= 0.0:
             raise ValueError("second_base_voxel_size_m must be positive.")
         if second_candidate_ratio <= 1.0:
@@ -115,9 +130,15 @@ class AdaptivePointPreprocessor:
         self.enable_timing = bool(enable_timing)
         self.validate_finite = bool(validate_finite)
 
-        # Fixed-K selection indices are device-local and reused across frames.
-        self._uniform_positions: torch.Tensor | None = None
-        self._uniform_denominator = self.num_points - 1
+        # Exact anchor counts the model may run at. A frame is reduced to the
+        # largest bucket <= its candidate count (no duplication); only frames
+        # below the smallest bucket are repeat-padded.
+        self.point_buckets: tuple[int, ...] = tuple(buckets)
+        # Sort the anchors along a Morton (Z-order) curve so that a strided
+        # subset of them is spatially uniform (fast top-level selection).
+        self.sort_anchors_morton = bool(sort_anchors_morton)
+        # Exact-count selection indices are device-local and reused across frames.
+        self._uniform_positions: dict[tuple[int, str], torch.Tensor] = {}
 
         self._second_auto_dimension = 2.0
         self._second_auto_iterations = 8
@@ -451,15 +472,24 @@ class AdaptivePointPreprocessor:
             candidate_track_ranks,
         )
 
+    def bucket_for(self, candidate_count: int) -> int:
+        """Largest configured bucket <= ``candidate_count`` (smallest bucket below it)."""
+        chosen = self.point_buckets[0]
+        for bucket in self.point_buckets:
+            if bucket <= candidate_count:
+                chosen = bucket
+        return int(chosen)
+
     def _repeat(
         self,
         points: torch.Tensor,
+        target: int,
     ) -> tuple[torch.Tensor, torch.Tensor, int]:
         count = int(points.shape[0])
         base = torch.arange(count, device=points.device, dtype=torch.long)
         indices = base.repeat(
-            (self.num_points + count - 1) // count
-        )[: self.num_points]
+            (target + count - 1) // count
+        )[:target]
         return (
             points.index_select(0, indices).contiguous(),
             indices.contiguous(),
@@ -469,10 +499,11 @@ class AdaptivePointPreprocessor:
     def _fps(
         self,
         points: torch.Tensor,
+        target: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         indices = pointnet2_utils.furthest_point_sample(
             points.unsqueeze(0).contiguous(),
-            self.num_points,
+            int(target),
         )[0].long()
         return (
             points.index_select(0, indices).contiguous(),
@@ -482,22 +513,25 @@ class AdaptivePointPreprocessor:
     def _uniform_select(
         self,
         points: torch.Tensor,
+        target: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Deterministically reduce N>K voxel representatives to exactly K."""
         count = int(points.shape[0])
-        if count <= self.num_points:
-            raise ValueError("_uniform_select requires more than num_points.")
+        target = int(target)
+        if count <= target:
+            raise ValueError("_uniform_select requires more than target points.")
 
-        positions = self._uniform_positions
-        if positions is None or positions.device != points.device:
+        key = (target, str(points.device))
+        positions = self._uniform_positions.get(key)
+        if positions is None:
             positions = torch.arange(
-                self.num_points, device=points.device, dtype=torch.long
+                target, device=points.device, dtype=torch.long
             )
-            self._uniform_positions = positions
+            self._uniform_positions[key] = positions
 
         # Integer-rounded linspace [0, N-1]. Because N>K, indices stay unique
         # and both endpoints are retained.
-        denominator = self._uniform_denominator
+        denominator = target - 1
         indices = torch.div(
             positions * (count - 1) + denominator // 2,
             denominator,
@@ -511,10 +545,66 @@ class AdaptivePointPreprocessor:
     def _select_exact_count(
         self,
         points: torch.Tensor,
+        target: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.final_selection == "fps":
-            return self._fps(points)
-        return self._uniform_select(points)
+            return self._fps(points, target)
+        return self._uniform_select(points, target)
+
+    @staticmethod
+    def _spread_bits(value: torch.Tensor) -> torch.Tensor:
+        """Interleave the low 21 bits of an int64 tensor with two zero bits."""
+        value = value & 0x1FFFFF
+        value = (value | (value << 32)) & 0x1F00000000FFFF
+        value = (value | (value << 16)) & 0x1F0000FF0000FF
+        value = (value | (value << 8)) & 0x100F00F00F00F00F
+        value = (value | (value << 4)) & 0x10C30C30C30C30C3
+        value = (value | (value << 2)) & 0x1249249249249249
+        return value
+
+    def _morton_order(self, points: torch.Tensor) -> torch.Tensor:
+        """Permutation sorting ``[N,3]`` points along a Z-order curve (no host sync)."""
+        cell = self.second_voxel_size_m or self.second_base_voxel_size_m
+        quantized = torch.floor(
+            (points - points.min(dim=0).values) / float(cell)
+        ).to(torch.int64).clamp_(0, (1 << 21) - 1)
+        key = (
+            self._spread_bits(quantized[:, 0])
+            | (self._spread_bits(quantized[:, 1]) << 1)
+            | (self._spread_bits(quantized[:, 2]) << 2)
+        )
+        return torch.argsort(key)
+
+    def _reduce_to_count(
+        self,
+        candidates: torch.Tensor,
+        target: int,
+        mode_prefix: str,
+    ) -> tuple[torch.Tensor, torch.Tensor, int, str]:
+        """Repeat / pass through / select ``candidates`` to exactly ``target`` anchors."""
+        count = int(candidates.shape[0])
+        target = int(target)
+        if count < target:
+            anchors, local_indices, unique_count = self._repeat(candidates, target)
+            selection_mode = f"{mode_prefix}-repeat"
+        elif count == target:
+            anchors = candidates.contiguous()
+            local_indices = torch.arange(
+                target,
+                device=candidates.device,
+                dtype=torch.long,
+            )
+            unique_count = target
+            selection_mode = f"{mode_prefix}-direct"
+        else:
+            anchors, local_indices = self._select_exact_count(candidates, target)
+            unique_count = target
+            selection_mode = f"{mode_prefix}-{self.final_selection}"
+        if self.sort_anchors_morton:
+            order = self._morton_order(anchors)
+            anchors = anchors.index_select(0, order).contiguous()
+            local_indices = local_indices.index_select(0, order).contiguous()
+        return anchors, local_indices, unique_count, selection_mode
 
     @staticmethod
     def aabb_extent_volume(
@@ -565,7 +655,9 @@ class AdaptivePointPreprocessor:
         point_ids: torch.Tensor | None = None,
         *,
         collect_diagnostics: bool = False,
+        target_count: int | None = None,
     ) -> PreparedModelInput:
+        """Reduce a world frame to exactly ``target_count`` anchors (default: its bucket)."""
         frame = self._validate_points(
             frame,
             check_finite=(collect_diagnostics or self.validate_finite),
@@ -602,43 +694,19 @@ class AdaptivePointPreprocessor:
             event_after_outlier = None
             event_after_exact = None
 
-        if n1 < self.num_points:
+        if n1 <= self.target_candidate_count:
+            # Small frames skip voxel-2: every input point is a candidate.
             candidates = frame
             candidate_indices = torch.arange(
                 n1, device=frame.device, dtype=torch.long
             )
-            anchors, local_indices, unique_count = self._repeat(candidates)
-            selection_mode = "first-repeat"
+            mode_prefix = "first"
             if event_after_voxel2 is not None:
                 event_after_voxel2.record()
             if event_after_outlier is not None:
                 event_after_outlier.record()
-        elif n1 == self.num_points:
-            candidates = anchors = frame
-            candidate_indices = local_indices = torch.arange(
-                self.num_points,
-                device=frame.device,
-                dtype=torch.long,
-            )
-            unique_count = self.num_points
-            selection_mode = "first-direct"
-            if event_after_voxel2 is not None:
-                event_after_voxel2.record()
-            if event_after_outlier is not None:
-                event_after_outlier.record()
-        elif n1 <= self.target_candidate_count:
-            candidates = frame
-            candidate_indices = torch.arange(
-                n1, device=frame.device, dtype=torch.long
-            )
-            if event_after_voxel2 is not None:
-                event_after_voxel2.record()
-            if event_after_outlier is not None:
-                event_after_outlier.record()
-            anchors, local_indices = self._select_exact_count(candidates)
-            unique_count = self.num_points
-            selection_mode = f"first-{self.final_selection}"
         else:
+            mode_prefix = "voxel2"
             (
                 candidates,
                 candidate_indices,
@@ -691,23 +759,38 @@ class AdaptivePointPreprocessor:
 
             if event_after_outlier is not None:
                 event_after_outlier.record()
-            n2 = int(candidates.shape[0])
-            if n2 < self.num_points:
-                anchors, local_indices, unique_count = self._repeat(candidates)
-                selection_mode = "voxel2-repeat"
-            elif n2 == self.num_points:
-                anchors = candidates.contiguous()
-                local_indices = torch.arange(
-                    self.num_points,
-                    device=frame.device,
-                    dtype=torch.long,
-                )
-                unique_count = self.num_points
-                selection_mode = "voxel2-direct"
-            else:
-                anchors, local_indices = self._select_exact_count(candidates)
-                unique_count = self.num_points
-                selection_mode = f"voxel2-{self.final_selection}"
+        candidate_point_ids = (
+            point_ids.index_select(0, candidate_indices).contiguous()
+            if point_ids is not None
+            else None
+        )
+        candidate_info: dict[str, object] = {
+            "input_count": n1,
+            "candidate_count_before_outlier_filter": (
+                candidate_count_before_filter
+            ),
+            "candidate_count": int(candidates.shape[0]),
+            "target_candidate_count": self.target_candidate_count,
+            "second_voxel_used": bool(second_used),
+            "second_mode": "auto" if second_used else "bypass",
+            "second_voxel_resolution_m": (
+                self.second_voxel_size_m if second_used else None
+            ),
+            "mode_prefix": mode_prefix,
+            "final_selection": self.final_selection,
+            "point_buckets": self.point_buckets,
+            **filter_info,
+        }
+        target = (
+            int(target_count)
+            if target_count is not None
+            else self.bucket_for(int(candidates.shape[0]))
+        )
+        anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
+            candidates,
+            target,
+            mode_prefix,
+        )
 
         if event_after_exact is not None:
             event_after_exact.record()
@@ -721,50 +804,64 @@ class AdaptivePointPreprocessor:
                 event_after_exact,
             )
 
-        final_indices = candidate_indices.index_select(
-            0, local_indices
-        ).contiguous()
-
-        # These checks are metadata-only and do not synchronize CUDA.
-        if anchors.shape != (self.num_points, 3):
-            raise RuntimeError(
-                f"Preprocessing produced {tuple(anchors.shape)}, expected "
-                f"({self.num_points}, 3)."
-            )
-        if self.num_points < 1024:
-            raise RuntimeError("DifFlow3D model input must contain >=1024 points.")
-
         if self.validate_finite and not collect_diagnostics:
             if not bool(torch.isfinite(anchors).all().item()):
                 raise RuntimeError("Invalid final DifFlow3D model anchors.")
 
+        return self._pack(
+            anchors,
+            local_indices,
+            unique_count,
+            selection_mode,
+            candidates,
+            candidate_indices,
+            candidate_point_ids,
+            candidate_info,
+            input_keep_mask,
+            timing_events,
+            collect_diagnostics,
+        )
+
+    def _pack(
+        self,
+        anchors: torch.Tensor,
+        local_indices: torch.Tensor,
+        unique_count: int,
+        selection_mode: str,
+        candidates: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        candidate_point_ids: torch.Tensor | None,
+        candidate_info: dict[str, object],
+        input_keep_mask: torch.Tensor,
+        timing_events: PreprocessTimingEvents | None,
+        collect_diagnostics: bool,
+    ) -> PreparedModelInput:
+        target = int(anchors.shape[0])
+        # Metadata-only checks; no CUDA synchronization.
+        if anchors.shape != (target, 3) or target < 1024:
+            raise RuntimeError(
+                f"Preprocessing produced {tuple(anchors.shape)}; DifFlow3D "
+                "model input must be [N>=1024, 3]."
+            )
+        final_indices = candidate_indices.index_select(
+            0, local_indices
+        ).contiguous()
         anchor_ids = (
-            point_ids.index_select(0, final_indices).contiguous()
-            if point_ids is not None
+            candidate_point_ids.index_select(0, local_indices).contiguous()
+            if candidate_point_ids is not None
             else None
         )
         info: dict[str, object] = {
-            "input_count": n1,
-            "candidate_count_before_outlier_filter": (
-                candidate_count_before_filter
-            ),
-            "candidate_count": int(candidates.shape[0]),
-            "anchor_count": int(anchors.shape[0]),
+            **candidate_info,
+            "anchor_count": target,
+            "bucket": target,
             "unique_anchor_count": int(unique_count),
-            "target_candidate_count": self.target_candidate_count,
-            "second_voxel_used": bool(second_used),
-            "second_mode": "auto" if second_used else "bypass",
-            "second_voxel_resolution_m": (
-                self.second_voxel_size_m if second_used else None
-            ),
             "selection_mode": selection_mode,
-            "final_selection": self.final_selection,
-            **filter_info,
         }
+        info.pop("mode_prefix", None)
         if collect_diagnostics:
             info.update(self._diagnostics(anchors))
             resolve_voxel_outlier_statistics(info)
-
         return PreparedModelInput(
             anchors,
             final_indices,
@@ -772,6 +869,38 @@ class AdaptivePointPreprocessor:
             input_keep_mask,
             info,
             timing_events,
+            candidates,
+            candidate_indices,
+            candidate_point_ids,
+            candidate_info,
+        )
+
+    def refinalize(
+        self,
+        prepared: PreparedModelInput,
+        target_count: int,
+    ) -> PreparedModelInput:
+        """Re-select an already prepared frame at another exact anchor count."""
+        if prepared.candidates is None or prepared.candidate_indices is None:
+            raise ValueError("refinalize needs a PreparedModelInput with candidates.")
+        candidate_info = dict(prepared.candidate_info or {})
+        anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
+            prepared.candidates,
+            int(target_count),
+            str(candidate_info.get("mode_prefix", "first")),
+        )
+        return self._pack(
+            anchors,
+            local_indices,
+            unique_count,
+            selection_mode,
+            prepared.candidates,
+            prepared.candidate_indices,
+            prepared.candidate_point_ids,
+            candidate_info,
+            prepared.input_keep_mask,
+            None,
+            False,
         )
 
     def calibrate(self, frame: torch.Tensor) -> dict[str, object]:

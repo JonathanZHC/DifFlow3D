@@ -113,6 +113,10 @@ def run(config: dict) -> None:
             args.outlier_filter_min_component_size_ratio
         ),
         enable_profiling=args.detailed_runtime_breakdown,
+        point_buckets=getattr(args, "point_buckets", None),
+        sort_anchors_morton=bool(getattr(args, "sort_anchors_morton", False)),
+        fast_top_level_min_points=int(getattr(args, "fast_top_level_min_points", 0)),
+        hier_cosine_min_points=int(getattr(args, "hier_cosine_min_points", 0)),
         validate_finite=args.validate_finite,
     )
 

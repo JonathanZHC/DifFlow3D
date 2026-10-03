@@ -15,6 +15,7 @@ from .pointconv import (
     cross_block_apply,
     cross_block_context,
     group_channel_first,
+    index_points_group,
     knn_point,
     knn_point_cosine_prenorm,
     knn_point_with_relative,
@@ -22,6 +23,25 @@ from .pointconv import (
 )
 
 scale = 1.0
+
+def _expand_hier_candidates(parent, matches, children):
+    """``[B,N]`` parent ids, ``[B,M,K]`` level-1 matches, ``[B,M,C]`` dense children -> ``[B,N,K*C]``."""
+    batch, count = parent.shape
+    k = int(matches.shape[2])
+    c = int(children.shape[2])
+    parent_matches = torch.gather(matches, 1, parent.unsqueeze(-1).expand(batch, count, k))
+    flat = parent_matches.reshape(batch, count * k)
+    dense = torch.gather(children, 1, flat.unsqueeze(-1).expand(batch, count * k, c))
+    return dense.reshape(batch, count, k * c)
+
+
+def _topk_cosine_within(query_n, reference_n, candidates, k):
+    """Top-k cosine neighbours of each query among its ``[B,N,C]`` candidate ids (unit-norm inputs)."""
+    grouped = index_points_group(reference_n, candidates)
+    similarity = (grouped * query_n.unsqueeze(2)).sum(-1)
+    top = torch.topk(similarity, int(k), dim=-1, largest=True, sorted=False).indices
+    return torch.gather(candidates, 2, top)
+
 
 class RecurrentUnit(nn.Module):
 
@@ -50,6 +70,35 @@ class RecurrentUnit(nn.Module):
         feat2_n = l2_normalize_points(feat2.permute(0, 2, 1))
         cosine_12 = knn_point_cosine_prenorm(half_neighbors, feat2_n, feat1_n)
         cosine_21 = knn_point_cosine_prenorm(half_neighbors, feat1_n, feat2_n)
+        # Kept for the next (finer) level's hierarchical candidate search.
+        self.last_cosine = (cosine_12, cosine_21)
+        return (cosine_12, cosine_21)
+
+    def _prepare_cosine_neighbors_hier(self, feat1, feat2, pc1, pc2, hier_context, children=8):
+        """Feature-space neighbours restricted to the dense children of the parent anchor's level-1 matches.
+
+        ``hier_context`` = (pc1_l1, pc2_l1, cosine_12_l1, cosine_21_l1) from the previous level. Each dense
+        point inherits the K level-1 matches of its nearest level-1 point and scores the ``children`` nearest
+        dense points of each match (K * children candidates), so the N^2 feature matrix is never built while
+        long-range matches survive.
+        """
+        pc1_l1, pc2_l1, cosine_12_l1, cosine_21_l1 = hier_context
+        half_neighbors = self.flow_nei // 2
+        p1 = pc1.permute(0, 2, 1).contiguous()
+        p2 = pc2.permute(0, 2, 1).contiguous()
+        q1 = pc1_l1.permute(0, 2, 1).contiguous()
+        q2 = pc2_l1.permute(0, 2, 1).contiguous()
+        parent1 = knn_point(1, q1, p1)[..., 0]
+        parent2 = knn_point(1, q2, p2)[..., 0]
+        children2 = knn_point(children, p2, q2)
+        children1 = knn_point(children, p1, q1)
+        candidates_12 = _expand_hier_candidates(parent1, cosine_12_l1, children2)
+        candidates_21 = _expand_hier_candidates(parent2, cosine_21_l1, children1)
+        feat1_n = l2_normalize_points(feat1.permute(0, 2, 1))
+        feat2_n = l2_normalize_points(feat2.permute(0, 2, 1))
+        cosine_12 = _topk_cosine_within(feat1_n, feat2_n, candidates_12, half_neighbors)
+        cosine_21 = _topk_cosine_within(feat2_n, feat1_n, candidates_21, half_neighbors)
+        self.last_cosine = (cosine_12, cosine_21)
         return (cosine_12, cosine_21)
 
     def _prepare_spatial_neighbors(self, pc1, pc2):
@@ -87,13 +136,16 @@ class RecurrentUnit(nn.Module):
         points2 = self.fe.conv2(feat2_new)
         return self._cross_from_combined_context(self.fe, points1, points2, context_12)
 
-    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5, self_knn_context=None):
+    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5, self_knn_context=None, hier_context=None):
         c_feat1 = torch.cat([feat1, feat1_new], dim=1)
         c_feat2 = torch.cat([feat2, feat2_new], dim=1)
         flows = []
         use_fast_cross = not self.training and self._supports_fast_cross_path()
         if use_fast_cross:
-            cosine_12, cosine_21 = self._prepare_cosine_neighbors(feat1, feat2)
+            if hier_context is not None:
+                cosine_12, cosine_21 = self._prepare_cosine_neighbors_hier(feat1, feat2, pc1, pc2, hier_context)
+            else:
+                cosine_12, cosine_21 = self._prepare_cosine_neighbors(feat1, feat2)
             if self_knn_context is not None:
                 # Source-frame-only geometry precomputed in encode_frame.
                 flow_neighbor_context = self.flow._neighbor_context_from_knn(*self_knn_context)
