@@ -3,7 +3,7 @@
 model shortcuts and the bucketed streaming runner.
 
 Inside the perceptive-safety-filter container:
-    PYTHONPATH=/workspace/external/ScenePredictor/DifFlow3D-dense \
+    PYTHONPATH=/workspace/external/ScenePredictor/DifFlow3D \
       /opt/tracking-venv/bin/python scripts/test_variable_points.py [--human /tmp/real]
 
 --human evaluates the whole runner (world-space API) on the recorded tracked-human
