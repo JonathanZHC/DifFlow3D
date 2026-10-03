@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from difflow3d.model import EncodedFrame, PointConvBidirection
+from .normalization import AnchoredNormalization, Transform
 from .preprocessing import (
     AdaptivePointPreprocessor,
     PreparedModelInput,
@@ -86,6 +87,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         validate_finite: bool = False,
         point_buckets: tuple[int, ...] | list[int] | None = None,
         sort_anchors_morton: bool = False,
+        normalization: AnchoredNormalization | None = None,
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("Streaming CUDA Graph inference requires CUDA.")
@@ -102,6 +104,8 @@ class DifFlow3DStreamingCudaGraphRunner:
             raise ValueError("target_model_volume must be positive.")
         if fixed_spatial_scale <= 0.0:
             raise ValueError("fixed_spatial_scale must be positive.")
+        if normalization is not None and auto_spatial_scale:
+            raise ValueError("normalization replaces auto_spatial_scale; enable only one of them.")
         if volume_epsilon <= 0.0:
             raise ValueError("volume_epsilon must be positive.")
         if dt_s <= 0.0:
@@ -186,6 +190,9 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._slot_preprocess_info: list[dict[str, object] | None] = [None, None]
         self._slot_prepared: list[PreparedModelInput | None] = [None, None]
         self._slot_bucket: list[int | None] = [None, None]
+        # Canonical normalisation (optional): the similarity transform each slot was staged with.
+        self.normalization = normalization
+        self._slot_transform: list[Transform | None] = [None, None]
 
         self._next_slot = 0
         self._previous_slot: int | None = None
@@ -458,6 +465,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         slot = self._next_slot
         previous = self._previous_slot
         bucket = int(prepared.info["bucket"])
+        transform = self._frame_transform(prepared.world_points)
         if previous is not None:
             previous_prepared = self._slot_prepared[previous]
             assert previous_prepared is not None
@@ -466,20 +474,35 @@ class DifFlow3DStreamingCudaGraphRunner:
                 int(previous_prepared.candidates.shape[0])
             )
             bucket = min(bucket, previous_natural)
-            if self._slot_bucket[previous] != bucket:
-                self._stage_into(
-                    previous,
-                    self.preprocessor.refinalize(previous_prepared, bucket),
-                    bucket,
-                    record_profile=False,
+            # Both frames of a pair share one transform: a re-anchored transform re-stages the
+            # previous frame exactly like a bucket change does (one extra encode).
+            renormalize = (
+                self.normalization is not None
+                and self.normalization.restage_previous
+                and self._slot_transform[previous] is not transform
+            )
+            if self._slot_bucket[previous] != bucket or renormalize:
+                restaged = (
+                    self.preprocessor.refinalize(previous_prepared, bucket)
+                    if self._slot_bucket[previous] != bucket
+                    else previous_prepared
                 )
+                self._stage_into(previous, restaged, bucket, record_profile=False, transform=transform)
                 self._pending_reencode_slot = previous
                 self.reencode_count += 1
             if int(prepared.info["bucket"]) != bucket:
                 prepared = self.preprocessor.refinalize(prepared, bucket)
         self._pair_bucket = bucket
-        self._stage_into(slot, prepared, bucket, record_profile=True)
+        self._stage_into(slot, prepared, bucket, record_profile=True, transform=transform)
         return prepared.world_points
+
+    def _frame_transform(self, world_points: torch.Tensor) -> Transform:
+        """This frame's model transform: the anchored canonical one, or the plain spatial scale."""
+        if self.normalization is not None:
+            transform, _ = self.normalization.update(world_points)
+            return transform
+        zero = torch.zeros(3, device=world_points.device, dtype=world_points.dtype)
+        return Transform(center=zero, scale=float(self.spatial_scale), model_center=zero)
 
     def _stage_into(
         self,
@@ -488,12 +511,15 @@ class DifFlow3DStreamingCudaGraphRunner:
         bucket_count: int,
         *,
         record_profile: bool,
+        transform: Transform,
     ) -> None:
-        scale = self.spatial_scale
+        scale = transform.scale
         bucket = self._buckets[bucket_count]
         reference = bucket.input(slot)
         reference.copy_(prepared.world_points.unsqueeze(0), non_blocking=True)
-        if scale != 1.0:
+        if self.normalization is not None:
+            reference.sub_(transform.center).mul_(scale).add_(transform.model_center)
+        elif scale != 1.0:
             reference.mul_(scale)
 
         # Shape checks are metadata-only and stay on the hot path. Expensive
@@ -513,6 +539,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         self._slot_prepared[slot] = prepared
         self._slot_bucket[slot] = bucket_count
+        self._slot_transform[slot] = transform
         self._slot_selection_indices[slot] = prepared.selection_indices
         self._slot_point_ids[slot] = prepared.point_ids
         self._slot_input_keep_masks[slot] = prepared.input_keep_mask
@@ -552,6 +579,9 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._current_bucket = None
         self._slot_prepared = [None, None]
         self._slot_bucket = [None, None]
+        self._slot_transform = [None, None]
+        if self.normalization is not None:
+            self.normalization.reset()
         self._current_output = None
         self._current_flow = None
         self._current_warped = None
@@ -699,14 +729,22 @@ class DifFlow3DStreamingCudaGraphRunner:
     # World-space outputs
     # ------------------------------------------------------------------
 
+    def _to_world(self, points: torch.Tensor, slot: int | None) -> torch.Tensor:
+        transform = self._slot_transform[slot] if slot is not None else None
+        if self.normalization is None or transform is None:
+            return points / self.spatial_scale
+        return (points - transform.model_center) / transform.scale + transform.center
+
     def flow_world(self) -> torch.Tensor:
-        return self.flow() / self.spatial_scale
+        transform = self._slot_transform[self._last_source_slot] if self._last_source_slot is not None else None
+        scale = transform.scale if (self.normalization is not None and transform is not None) else self.spatial_scale
+        return self.flow() / scale
 
     def source_points_world(self) -> torch.Tensor:
-        return self.source_points() / self.spatial_scale
+        return self._to_world(self.source_points(), self._last_source_slot)
 
     def target_points_world(self) -> torch.Tensor:
-        return self.target_points() / self.spatial_scale
+        return self._to_world(self.target_points(), self._last_target_slot)
 
     def warped_points_world(self) -> torch.Tensor:
         return self.source_points_world() + self.flow_world()
