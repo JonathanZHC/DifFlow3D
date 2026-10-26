@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import torch
@@ -48,6 +49,9 @@ class _BucketGraphs:
     flow_ba: torch.Tensor | None = None
     warped_ab: torch.Tensor | None = None
     warped_ba: torch.Tensor | None = None
+    # Cholesky factors [B,N,3,3] of the flow covariance (model units), only with an uncertainty head.
+    chol_ab: torch.Tensor | None = None
+    chol_ba: torch.Tensor | None = None
 
     def input(self, slot: int) -> torch.Tensor:
         return self.input_a if slot == 0 else self.input_b
@@ -58,10 +62,15 @@ class DifFlow3DStreamingCudaGraphRunner:
 
     Hot-path invariants:
       * variable-size world clouds are reduced to exactly ``num_points``;
-      * model coordinates use one frozen isotropic spatial scale;
+      * model coordinates use one frozen isotropic spatial scale, or the
+        piecewise-constant canonical transform (``normalization``);
       * frame encodings are reused across adjacent pairs;
-      * no GPU->CPU diagnostic synchronization occurs after calibration;
-      * optional detailed timing records CUDA events but does not synchronize.
+      * no GPU->CPU diagnostic synchronization occurs after calibration; with
+        canonical normalisation, each staged frame copies 4 values (anchor
+        centroid and RMS radius) to the host for the re-anchor decision;
+      * optional detailed timing records CUDA events but does not synchronize;
+      * the optional flow-uncertainty head runs inside the decode graphs; its
+        scale input is a static device tensor refreshed by an on-device fill.
     """
 
     def __init__(
@@ -88,6 +97,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         point_buckets: tuple[int, ...] | list[int] | None = None,
         sort_anchors_morton: bool = False,
         normalization: AnchoredNormalization | None = None,
+        uncertainty_head: torch.nn.Module | None = None,
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("Streaming CUDA Graph inference requires CUDA.")
@@ -193,6 +203,21 @@ class DifFlow3DStreamingCudaGraphRunner:
         # Canonical normalisation (optional): the similarity transform each slot was staged with.
         self.normalization = normalization
         self._slot_transform: list[Transform | None] = [None, None]
+        # Optional flow-uncertainty head, captured into each decode graph after the flow. Call contract
+        # (difflow3d.runtime.uncertainty.FlowCovarianceHead), channels-last, model units:
+        #   head(xyz [B,N,3], feat [B,N,128], u [B,N,1], flow [B,N,3], kk=[B]) -> L [B,N,3,3], Sigma_model = L L^T,
+        # with xyz the source points, feat/u from RecurrentUnit.capture_head_inputs and kk the decoded pair's model
+        # units per metre.
+        self.uncertainty_head = uncertainty_head
+        self._head_scale: torch.Tensor | None = None     # kk: static device tensor, see _stage_head_scale()
+        self._head_scale_value: float | None = None      # host copy of kk
+        if uncertainty_head is not None:
+            head_device = next(uncertainty_head.parameters()).device
+            if head_device != device:
+                raise ValueError(f"The uncertainty head is on {head_device}, the model on {device}.")
+            uncertainty_head.eval()
+            self._head_scale = torch.ones(self.batch_size, device=device, dtype=torch.float32)
+            self._head_scale_value = 1.0
 
         self._next_slot = 0
         self._previous_slot: int | None = None
@@ -204,6 +229,10 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._current_output = None
         self._current_flow: torch.Tensor | None = None
         self._current_warped: torch.Tensor | None = None
+        self._current_chol: torch.Tensor | None = None
+        # Model units per world unit the last pair was decoded at (None if push() decoded it before the automatic
+        # spatial scale was calibrated).
+        self._current_scale: float | None = None
         self.reencode_count = 0
 
         self._profile_active = False
@@ -225,27 +254,61 @@ class DifFlow3DStreamingCudaGraphRunner:
     def point_buckets(self) -> tuple[int, ...]:
         return tuple(self._buckets)
 
+    @property
+    def has_uncertainty(self) -> bool:
+        return self.uncertainty_head is not None
+
     # ------------------------------------------------------------------
     # CUDA graph capture
     # ------------------------------------------------------------------
+
+    @contextmanager
+    def _head_input_capture(self):
+        """Let the fine recurrent unit keep the head inputs while the head is warmed up or captured."""
+        if self.uncertainty_head is None:
+            yield
+            return
+        unit = self.model.recurrent0
+        previous = unit.capture_head_inputs
+        unit.capture_head_inputs = True
+        try:
+            yield
+        finally:
+            unit.capture_head_inputs = previous
+            unit.head_inputs = None
+
+    def _flow_cholesky(self, source: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
+        """Uncertainty head on the inputs kept by the decode that just ran (channels-last, model units)."""
+        feat, certainty = self.model.recurrent0.head_inputs
+        return self.uncertainty_head(
+            source,
+            feat.transpose(1, 2),
+            certainty.transpose(1, 2),
+            flow,
+            kk=self._head_scale,
+        )
 
     def _warmup(self, bucket: _BucketGraphs, count: int) -> None:
         current = torch.cuda.current_stream(self.device)
         setup = torch.cuda.Stream(device=self.device)
         setup.wait_stream(current)
 
-        with torch.cuda.stream(setup), torch.inference_mode():
+        with torch.cuda.stream(setup), torch.inference_mode(), self._head_input_capture():
             for _ in range(count):
                 encoded_a = self.model.encode_frame(bucket.input_a, bucket.input_a)
                 encoded_b = self.model.encode_frame(bucket.input_b, bucket.input_b)
                 output_ab = self.model.decode_pair(
                     encoded_a, encoded_b, None, self.uncertainty
                 )
+                flow_ab = output_ab[0][0][0].permute(0, 2, 1).contiguous()
+                if self.uncertainty_head is not None:
+                    self._flow_cholesky(bucket.input_a, flow_ab)
                 output_ba = self.model.decode_pair(
                     encoded_b, encoded_a, None, self.uncertainty
                 )
-                _ = output_ab[0][0][0].permute(0, 2, 1).contiguous()
-                _ = output_ba[0][0][0].permute(0, 2, 1).contiguous()
+                flow_ba = output_ba[0][0][0].permute(0, 2, 1).contiguous()
+                if self.uncertainty_head is not None:
+                    self._flow_cholesky(bucket.input_b, flow_ba)
 
         current.wait_stream(setup)
         torch.cuda.synchronize(self.device)
@@ -278,7 +341,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         assert bucket.encoded_b is not None
 
         with torch.cuda.graph(bucket.decode_graph_ab):
-            with torch.inference_mode():
+            with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ab = self.model.decode_pair(
                     bucket.encoded_a,
                     bucket.encoded_b,
@@ -292,9 +355,11 @@ class DifFlow3DStreamingCudaGraphRunner:
                     .contiguous()
                 )
                 bucket.warped_ab = bucket.input_a + bucket.flow_ab
+                if self.uncertainty_head is not None:
+                    bucket.chol_ab = self._flow_cholesky(bucket.input_a, bucket.flow_ab)
 
         with torch.cuda.graph(bucket.decode_graph_ba):
-            with torch.inference_mode():
+            with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ba = self.model.decode_pair(
                     bucket.encoded_b,
                     bucket.encoded_a,
@@ -308,6 +373,8 @@ class DifFlow3DStreamingCudaGraphRunner:
                     .contiguous()
                 )
                 bucket.warped_ba = bucket.input_b + bucket.flow_ba
+                if self.uncertainty_head is not None:
+                    bucket.chol_ba = self._flow_cholesky(bucket.input_b, bucket.flow_ba)
 
         torch.cuda.synchronize(self.device)
         self.reset()
@@ -585,6 +652,8 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._current_output = None
         self._current_flow = None
         self._current_warped = None
+        self._current_chol = None
+        self._current_scale = None
         self._profile_active = False
         self._profile_events = []
 
@@ -625,6 +694,9 @@ class DifFlow3DStreamingCudaGraphRunner:
         source_slot = self._previous_slot
         target_slot = current_slot
         self._current_bucket = bucket
+        scale = self._decode_scale(source_slot)
+        if self.uncertainty_head is not None:
+            self._stage_head_scale(scale)
 
         if self.enable_profiling and self._profile_active:
             decode_start = torch.cuda.Event(enable_timing=True)
@@ -638,11 +710,13 @@ class DifFlow3DStreamingCudaGraphRunner:
             self._current_output = bucket.output_ab
             self._current_flow = bucket.flow_ab
             self._current_warped = bucket.warped_ab
+            self._current_chol = bucket.chol_ab
         elif source_slot == 1 and target_slot == 0:
             bucket.decode_graph_ba.replay()
             self._current_output = bucket.output_ba
             self._current_flow = bucket.flow_ba
             self._current_warped = bucket.warped_ba
+            self._current_chol = bucket.chol_ba
         else:
             raise RuntimeError(
                 "Streaming graph slots did not alternate as expected."
@@ -652,11 +726,27 @@ class DifFlow3DStreamingCudaGraphRunner:
             decode_end.record()
             self._profile_pair("decode_ms", decode_start, decode_end)
 
+        self._current_scale = scale
         self._last_source_slot = source_slot
         self._last_target_slot = target_slot
         self._previous_slot = target_slot
         self._next_slot = 1 - target_slot
         return self._current_output
+
+    def _decode_scale(self, source_slot: int) -> float | None:
+        """Model units per world unit of the pair about to be decoded (None while the automatic spatial scale is
+        uncalibrated, which only the model-space push() API allows)."""
+        if self.normalization is None and self.preprocessor.needs_spatial_scale_calibration:
+            return None
+        return self._slot_scale(source_slot)
+
+    def _stage_head_scale(self, value: float | None) -> None:
+        """Set the head's scale input to the decoded pair's model units per metre (on-device fill, no host sync)."""
+        if value is None:
+            raise RuntimeError("The uncertainty head needs the spatial scale; it has not been calibrated yet.")
+        if value != self._head_scale_value:
+            self._head_scale.fill_(value)
+            self._head_scale_value = value
 
     def push(self, frame: torch.Tensor):
         """Legacy fixed-size model-space copy + replay API (one bucket per stream)."""
@@ -735,10 +825,22 @@ class DifFlow3DStreamingCudaGraphRunner:
             return points / self.spatial_scale
         return (points - transform.model_center) / transform.scale + transform.center
 
+    def _slot_scale(self, slot: int | None) -> float:
+        """Model units per world unit of a staged frame: its canonical transform's k, else the spatial scale."""
+        transform = self._slot_transform[slot] if slot is not None else None
+        if self.normalization is not None and transform is not None:
+            return transform.scale
+        return self.spatial_scale
+
     def flow_world(self) -> torch.Tensor:
-        transform = self._slot_transform[self._last_source_slot] if self._last_source_slot is not None else None
-        scale = transform.scale if (self.normalization is not None and transform is not None) else self.spatial_scale
-        return self.flow() / scale
+        """Flow of the last decoded pair in world units, with the scale that pair was decoded at: still valid after
+        the next stage_world() (which may re-anchor the source slot), until the next replay_next()."""
+        flow = self.flow()
+        scale = self._current_scale
+        if scale is None:
+            # push() before the automatic spatial scale was calibrated: the current scale (raises while uncalibrated).
+            scale = self._slot_scale(self._last_source_slot)
+        return flow / scale
 
     def source_points_world(self) -> torch.Tensor:
         return self._to_world(self.source_points(), self._last_source_slot)
@@ -751,6 +853,28 @@ class DifFlow3DStreamingCudaGraphRunner:
 
     def velocity_world(self) -> torch.Tensor:
         return self.flow_world() / self.dt_s
+
+    # ------------------------------------------------------------------
+    # Flow uncertainty (requires uncertainty_head)
+    # ------------------------------------------------------------------
+
+    def flow_chol_model(self) -> torch.Tensor:
+        """Static ``[B,N,3,3]`` lower-triangular factor of the flow covariance in model units (overwritten by the next
+        decode); world covariance = L L^T / k^2 with k the scale the pair was decoded at (the head's kk)."""
+        if self.uncertainty_head is None:
+            raise RuntimeError("The runner was built without an uncertainty head.")
+        if self._current_chol is None:
+            raise RuntimeError("At least two frames are required.")
+        return self._current_chol
+
+    def flow_cov_world(self) -> torch.Tensor:
+        """New ``[B,N,3,3]`` covariance (m^2) of the displacement of each source anchor, row-aligned with flow_world();
+        like flow_world() it uses the decode-time scale, so it stays valid until the next replay_next()."""
+        chol = self.flow_chol_model()
+        scale = self._current_scale
+        # Elementwise L L^T: exact fp32 and exactly symmetric (a batched GEMM may run in TF32).
+        covariance = (chol.unsqueeze(-2) * chol.unsqueeze(-3)).sum(dim=-1)
+        return covariance / (scale * scale)
 
     # ------------------------------------------------------------------
     # Selection metadata

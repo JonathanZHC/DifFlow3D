@@ -91,7 +91,7 @@ def subset_knn_context(
 class PointConvEncoder(nn.Module):
     """Original encoder with an exact eval-only level0/level1 KNN reuse path."""
 
-    def __init__(self, weightnet=8):
+    def __init__(self, weightnet=8, level1_points=1024):
         super().__init__()
         feat_nei = 32
 
@@ -105,7 +105,7 @@ class PointConvEncoder(nn.Module):
         self.level0_1 = Conv1d(32, 64)
 
         self.level1 = PointConvD(
-            1024,
+            int(level1_points),
             feat_nei,
             64 + 3,
             64,
@@ -167,7 +167,7 @@ class PointConvEncoder(nn.Module):
         cached = self._strided_l1_cache.get(key)
         if cached is None:
             cached = (
-                torch.linspace(0.0, float(point_count - 1), 1024, device=device)
+                torch.linspace(0.0, float(point_count - 1), int(self.level1.npoint), device=device)
                 .round()
                 .to(torch.int32)
                 .unsqueeze(0)
@@ -220,10 +220,11 @@ class PointConvEncoder(nn.Module):
         )
         feat_l0_1 = self.level0_1(feat_l0)
 
-        # The checkpoint architecture defines level 1 at exactly 1024 points.
-        # Reusing the level-0 neighborhood is exact only when the input already
-        # contains 1024 points.  For larger deployment inputs (e.g. 2048), run
-        # the original PointConvD downsampling so recurrent1 stays at 1024.
+        # Level 1 has level1.npoint points (fork default 1024; the upstream
+        # model samples 2048). A 1024-point input is used as level 1 directly,
+        # reusing the level-0 neighborhood (exact only then). For larger
+        # deployment inputs (e.g. 2048), run the original PointConvD
+        # downsampling so recurrent1 stays at level1.npoint.
         if xyz.shape[2] == 1024:
             pc_l1 = xyz
             fps_l1 = self._identity_fps_indices(
@@ -240,6 +241,11 @@ class PointConvEncoder(nn.Module):
         else:
             fps_idx = None
             point_count = int(xyz.shape[2])
+            if point_count < int(self.level1.npoint):
+                raise ValueError(
+                    f"Level 1 samples {self.level1.npoint} points; inputs other "
+                    f"than 1024 points need at least that many, got {point_count}."
+                )
             if (
                 self.fast_top_level_min_points > 0
                 and point_count >= self.fast_top_level_min_points

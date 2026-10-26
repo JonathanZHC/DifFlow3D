@@ -9,6 +9,7 @@ radii, and on ``reset()`` (a new stream). The runner then re-encodes the previou
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -47,8 +48,9 @@ class AnchoredNormalization:
         self.per_frame = bool(per_frame)                 # re-anchor every frame (evaluation only)
         self.restage_previous = bool(restage_previous)   # False only to measure a broken stream (evaluation only)
         self.reanchor_count = 0
-        self._anchor: tuple[torch.Tensor, float] | None = None
+        self._anchor: tuple[tuple[float, float, float], float] | None = None   # host centroid and RMS radius
         self._transform: Transform | None = None
+        self._model_center: torch.Tensor | None = None   # device copy of model_center (per device and dtype)
 
     def reset(self) -> None:
         self._anchor = None
@@ -56,18 +58,21 @@ class AnchoredNormalization:
 
     def update(self, points: torch.Tensor) -> tuple[Transform, bool]:
         """Transform for this frame and whether it differs from the previous one. One 4-value
-        device -> host copy (centroid and RMS radius) per frame."""
+        device -> host copy (centroid and RMS radius) per frame; the re-anchor test runs on the host."""
         center = points.mean(0)
         stats = torch.cat([center, ((points - center) ** 2).sum(1).mean().sqrt().reshape(1)]).tolist()
-        radius = max(float(stats[3]), 1.0e-6)
+        host_center, radius = tuple(stats[:3]), max(stats[3], 1.0e-6)
         if self._anchor is not None and not self.per_frame:
             anchor_center, anchor_radius = self._anchor
-            drift = float(torch.linalg.norm(center - anchor_center))
+            drift = math.dist(host_center, anchor_center)
             if max(radius / anchor_radius, anchor_radius / radius) <= self.scale_ratio and drift <= self.center_shift * anchor_radius:
                 return self._transform, False
         changed = self._anchor is not None
-        self._anchor = (center.clone(), radius)
-        self._transform = Transform(center=center.clone(), scale=self.model_radius / radius,
-                                    model_center=torch.tensor(self.model_center, device=points.device, dtype=points.dtype))
+        self._anchor = (host_center, radius)
+        model_center = self._model_center
+        if model_center is None or model_center.device != points.device or model_center.dtype != points.dtype:
+            model_center = torch.tensor(self.model_center, device=points.device, dtype=points.dtype)
+            self._model_center = model_center
+        self._transform = Transform(center=center, scale=self.model_radius / radius, model_center=model_center)
         self.reanchor_count += int(changed)
         return self._transform, changed

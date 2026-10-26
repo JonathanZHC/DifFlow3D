@@ -56,6 +56,10 @@ class RecurrentUnit(nn.Module):
         neighbors = 9
         self.flow = DiffusionSceneFlowGRUResidual(neighbors, in_channel=cross_mlp2[-1] + feat_ch, latent_channel=latent_ch, mlp=flow_channels, channels=flow_channels)
         self.warping = PointWarping()
+        # Opt-in: keep the inputs of the flow-uncertainty head from the last iteration (difflow3d.runtime.uncertainty).
+        # head_inputs = (condition [B, latent_ch + feat_ch + cross_mlp2[-1], N], certainty [B, 1, N]), channels-first.
+        self.capture_head_inputs = False
+        self.head_inputs = None
 
     def _supports_fast_cross_path(self) -> bool:
         """Check the imported pointconv_util modules expose expected weights."""
@@ -174,6 +178,9 @@ class RecurrentUnit(nn.Module):
                 feat_flow, flow, certainty_new = self.flow._forward_eval_fast(pc1, pc1, up_feat, new_feat1, up_flow, gt_flow, certainty, uncertainty, neighbor_context=flow_neighbor_context, time_per_point=flow_time_per_point)
             else:
                 feat_flow, flow, certainty_new = self.flow(pc1, pc1, up_feat, new_feat1, up_flow, gt_flow, certainty, uncertainty)
+            if self.capture_head_inputs and iteration + 1 == self.iters:
+                # Condition of the final denoiser call: the latent passed INTO it and cat(encoder features, flow embedding).
+                self.head_inputs = (torch.cat([up_feat, new_feat1], dim=1), certainty_new)
             up_flow = flow
             up_feat = feat_flow
             flows.append(flow)

@@ -8,6 +8,7 @@ from .recovery import SoftmaxAnchorMotionRecoverer, DenseMotionRecovery
 from .inference import DifFlow3DConfig, DifFlow3DInference, DifFlow3DEstimate
 from .checkpoint import CheckpointReport, load_checkpoint
 from .voxel_outlier import resolve_voxel_outlier_statistics
+from .uncertainty import FlowCovarianceHead, load_flow_covariance_head
 from .motion import (
     AnchorTransportResult,
     KalmanResult,
@@ -28,6 +29,8 @@ __all__ = [
     "CheckpointReport",
     "load_checkpoint",
     "resolve_voxel_outlier_statistics",
+    "FlowCovarianceHead",
+    "load_flow_covariance_head",
     "AnchorTransportResult",
     "KalmanResult",
     "CudaAnchorTemporalOps",

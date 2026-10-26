@@ -40,7 +40,9 @@ class PointConvBidirection(nn.Module):
         coarse_iters: int | None = None,
         middle_iters: int | None = None,
         fine_iters: int | None = None,
+        level1_points: int = 1024,
     ):
+        """``level1_points``: pyramid level 1 size for inputs above 1024 points (upstream DifFlow3D: 2048)."""
         super().__init__()
         flow_nei = 32
         weightnet = 8
@@ -65,7 +67,10 @@ class PointConvBidirection(nn.Module):
             "fine": fine_iters,
         }
 
-        self.encoder = PointConvEncoder(weightnet=weightnet)
+        self.level1_points = int(level1_points)
+        if self.level1_points < 1024:
+            raise ValueError("level1_points must be >= 1024.")
+        self.encoder = PointConvEncoder(weightnet=weightnet, level1_points=self.level1_points)
         # Dense-input options (see configure_dense_points); 0 = disabled.
         self.hier_cosine_min_points = 0
 
