@@ -8,8 +8,10 @@ from dataclasses import dataclass
 import torch
 
 from difflow3d.model import EncodedFrame, PointConvBidirection
-from difflow3d.model.encoder import check_input_points
+from difflow3d.model.encoder import REFERENCE_POINTS, check_input_points
+from difflow3d.model.segments import Segments, level1_capacities, level1_capacity
 from .normalization import AnchoredNormalization, Transform
+from .segmentation import MAX_SEGMENTS, SegmentNormalization, SegmentTransform, level1_total
 from .preprocessing import (
     AdaptivePointPreprocessor,
     PreparedModelInput,
@@ -33,15 +35,28 @@ class _ProfileEventPair:
 
 @dataclass
 class _BucketGraphs:
-    """Static inputs, captured CUDA graphs and outputs for one exact point count."""
+    """Static inputs, captured CUDA graphs and outputs for one graph shape: (N0 anchors, N1 level-1 points).
+
+    The anchors of a frame are one or several objects (segments) in object-major order. A multi-object graph
+    has a fixed N0 and level-1 capacity N1 (model.segments.level1_capacity); the per-object layout of each slot's
+    frame is a static `Segments` buffer set per slot (written by _stage_into), since the two frames of a pair
+    split the bucket differently. The per-point canonical transform (center, scale) of each staged frame lives in
+    static buffers too, so the outputs can be mapped back per object."""
 
     num_points: int
+    level1_points: int
     input_a: torch.Tensor
     input_b: torch.Tensor
     encode_graph_a: torch.cuda.CUDAGraph
     encode_graph_b: torch.cuda.CUDAGraph
     decode_graph_ab: torch.cuda.CUDAGraph
     decode_graph_ba: torch.cuda.CUDAGraph
+    segments_a: Segments | None = None
+    segments_b: Segments | None = None
+    center_a: torch.Tensor | None = None
+    center_b: torch.Tensor | None = None
+    scale_a: torch.Tensor | None = None
+    scale_b: torch.Tensor | None = None
     encoded_a: EncodedFrame | None = None
     encoded_b: EncodedFrame | None = None
     output_ab: object = None
@@ -56,6 +71,19 @@ class _BucketGraphs:
 
     def input(self, slot: int) -> torch.Tensor:
         return self.input_a if slot == 0 else self.input_b
+
+    @property
+    def multi_object(self) -> bool:
+        return self.segments_a is not None
+
+    def segments(self, slot: int) -> Segments | None:
+        return self.segments_a if slot == 0 else self.segments_b
+
+    def center(self, slot: int) -> torch.Tensor:
+        return self.center_a if slot == 0 else self.center_b
+
+    def scale(self, slot: int) -> torch.Tensor:
+        return self.scale_a if slot == 0 else self.scale_b
 
 
 class DifFlow3DStreamingCudaGraphRunner:
@@ -96,6 +124,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         enable_profiling: bool = False,
         validate_finite: bool = False,
         point_buckets: tuple[int, ...] | list[int] | None = None,
+        multi_object_graphs: bool = True,
         sort_anchors_morton: bool = False,
         normalization: AnchoredNormalization | None = None,
         uncertainty_head: torch.nn.Module | None = None,
@@ -174,24 +203,18 @@ class DifFlow3DStreamingCudaGraphRunner:
             sort_anchors_morton=sort_anchors_morton,
         )
 
-        # One set of static inputs + graphs per exact point count ("bucket").
-        # Both frames of a streaming pair run at the same bucket: the smaller
-        # of their natural buckets; a frame already encoded at another bucket
-        # is re-selected from its candidates and re-encoded (one extra encode).
-        self._buckets: dict[int, _BucketGraphs] = {}
+        # One set of static inputs + graphs per graph shape (N0 anchors, N1 level-1 points, multi-object). Both
+        # frames of a streaming pair run at the same shape: the smaller of their natural buckets; a frame already
+        # encoded at another shape is re-selected from its candidates and re-encoded (one extra encode).
+        # Single-object frames run the plain graphs (N1 = min(N0, 1024)); multi-object frames run segmented graphs
+        # whose level 1 is quantised (segments.level1_capacities), all captured here so no frame pays a capture.
+        self._warmup_count = int(warmup)
+        self._buckets: dict[tuple[int, int, bool], _BucketGraphs] = {}
         for count in self.preprocessor.point_buckets:
-            shape = (self.batch_size, int(count), 3)
-            input_a = torch.empty(shape, device=device, dtype=torch.float32)
-            self._buckets[int(count)] = _BucketGraphs(
-                int(count),
-                input_a,
-                torch.empty_like(input_a),
-                torch.cuda.CUDAGraph(),
-                torch.cuda.CUDAGraph(),
-                torch.cuda.CUDAGraph(),
-                torch.cuda.CUDAGraph(),
-            )
+            self._buckets[self._graph_key(int(count), (int(count),))] = self._new_graphs(int(count), min(int(count), REFERENCE_POINTS))
         self._largest_bucket = self._buckets[max(self._buckets)]
+        multi_keys = ([(int(c), cap, True) for c in self.preprocessor.point_buckets for cap in level1_capacities(int(c))]
+                      if multi_object_graphs else [])
 
         self._slot_selection_indices: list[torch.Tensor | None] = [None, None]
         self._slot_point_ids: list[torch.Tensor | None] = [None, None]
@@ -199,30 +222,34 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._slot_preprocess_info: list[dict[str, object] | None] = [None, None]
         self._slot_prepared: list[PreparedModelInput | None] = [None, None]
         self._slot_bucket: list[int | None] = [None, None]
+        self._slot_graphs: list[_BucketGraphs | None] = [None, None]
         # Canonical normalisation (optional): the similarity transform each slot was staged with.
         self.normalization = normalization
-        self._slot_transform: list[Transform | None] = [None, None]
+        # Per-object canonical normalisation (frames staged with point ids): same parameters as `normalization`.
+        self.segment_normalization = (
+            SegmentNormalization(normalization.model_center, normalization.model_radius, normalization.scale_ratio,
+                                 normalization.center_shift, normalization.restage_previous)
+            if normalization is not None else None
+        )
+        self._slot_transform: list[Transform | SegmentTransform | None] = [None, None]
         # Optional flow-uncertainty head, captured into each decode graph after the flow. Call contract
         # (difflow3d.runtime.uncertainty.FlowCovarianceHead), channels-last, model units:
         #   head(xyz [B,N,3], feat [B,N,128], u [B,N,1], flow [B,N,3], kk=[B]) -> L [B,N,3,3], Sigma_model = L L^T,
         # with xyz the source points, feat/u from RecurrentUnit.capture_head_inputs and kk the decoded pair's model
         # units per metre.
         self.uncertainty_head = uncertainty_head
-        self._head_scale: torch.Tensor | None = None     # kk: static device tensor, see _stage_head_scale()
-        self._head_scale_value: float | None = None      # host copy of kk
         if uncertainty_head is not None:
             head_device = next(uncertainty_head.parameters()).device
             if head_device != device:
                 raise ValueError(f"The uncertainty head is on {head_device}, the model on {device}.")
             uncertainty_head.eval()
-            self._head_scale = torch.ones(self.batch_size, device=device, dtype=torch.float32)
-            self._head_scale_value = 1.0
 
         self._next_slot = 0
         self._previous_slot: int | None = None
         self._last_source_slot: int | None = None
         self._last_target_slot: int | None = None
         self._pair_bucket: int | None = None
+        self._pair_graphs: _BucketGraphs | None = None   # graphs of the pair being staged (shape of both frames)
         self._pending_reencode_slot: int | None = None
         self._current_bucket: _BucketGraphs | None = None
         self._current_output = None
@@ -232,13 +259,53 @@ class DifFlow3DStreamingCudaGraphRunner:
         # Model units per world unit the last pair was decoded at (None if push() decoded it before the automatic
         # spatial scale was calibrated).
         self._current_scale: float | None = None
+        # Per-point scale [B,N] / centre [B,N,3] of the decoded pair's source frame (static buffers of its graph).
+        self._current_scale_points: torch.Tensor | None = None
+        self._current_center_points: torch.Tensor | None = None
         self.reencode_count = 0
 
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
 
+        self.capture_count = 0          # graph sets captured (a multi-object shape missing here is captured lazily)
         for bucket in self._buckets.values():
             self._capture(bucket, int(warmup))
+        for count, capacity, _ in multi_keys:
+            self._graphs_for(count, (count,), capacity)
+        self.reset()
+
+    @staticmethod
+    def _graph_key(count: int, segment_counts) -> tuple[int, int, bool]:
+        """(N0, N1, multi-object): a single object runs the plain graph; several objects the segmented graph
+        whose level-1 size is the quantised capacity of what the objects need."""
+        if len(segment_counts) <= 1:
+            return int(count), min(int(count), REFERENCE_POINTS), False
+        return int(count), level1_capacity(int(count), level1_total([int(c) for c in segment_counts])), True
+
+    def _new_graphs(self, count: int, level1: int) -> _BucketGraphs:
+        shape = (self.batch_size, int(count), 3)
+        input_a = torch.empty(shape, device=self.device, dtype=torch.float32)
+        return _BucketGraphs(
+            int(count), int(level1), input_a, torch.empty_like(input_a),
+            torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph(),
+            center_a=torch.zeros(shape, device=self.device), center_b=torch.zeros(shape, device=self.device),
+            scale_a=torch.ones((self.batch_size, int(count)), device=self.device),
+            scale_b=torch.ones((self.batch_size, int(count)), device=self.device),
+        )
+
+    def _graphs_for(self, count: int, segment_counts, capacity: int | None = None) -> _BucketGraphs:
+        """Graphs of this shape (``capacity`` forces a multi-object shape), captured on first use."""
+        key = (int(count), int(capacity), True) if capacity is not None else self._graph_key(count, segment_counts)
+        bucket = self._buckets.get(key)
+        if bucket is None:
+            bucket = self._new_graphs(key[0], key[1])
+            # A representative layout for capture: the segment table is rewritten per frame anyway.
+            for name in ("segments_a", "segments_b"):
+                setattr(bucket, name, Segments(tuple(int(c) for c in segment_counts), self.model.level1_points,
+                                               self.device, level1_total=key[1]))
+            self._capture(bucket, self._warmup_count)
+            self._buckets[key] = bucket
+        return bucket
 
     # Legacy single-size accessors (largest bucket).
     @property
@@ -251,7 +318,7 @@ class DifFlow3DStreamingCudaGraphRunner:
 
     @property
     def point_buckets(self) -> tuple[int, ...]:
-        return tuple(self._buckets)
+        return tuple(sorted({key[0] for key in self._buckets}))
 
     @property
     def has_uncertainty(self) -> bool:
@@ -276,15 +343,17 @@ class DifFlow3DStreamingCudaGraphRunner:
             unit.capture_head_inputs = previous
             unit.head_inputs = None
 
-    def _flow_cholesky(self, source: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
-        """Uncertainty head on the inputs kept by the decode that just ran (channels-last, model units)."""
+    def _flow_cholesky(self, source: torch.Tensor, flow: torch.Tensor, scale: torch.Tensor, segments) -> torch.Tensor:
+        """Uncertainty head on the inputs kept by the decode that just ran (channels-last, model units); kk is the
+        per-point model-units-per-metre of the source frame (per-object normalisation)."""
         feat, certainty = self.model.recurrent0.head_inputs
         return self.uncertainty_head(
             source,
             feat.transpose(1, 2),
             certainty.transpose(1, 2),
             flow,
-            kk=self._head_scale,
+            kk=scale,
+            seg=segments.ids[0] if segments is not None else None,
         )
 
     def _warmup(self, bucket: _BucketGraphs, count: int) -> None:
@@ -294,20 +363,20 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         with torch.cuda.stream(setup), torch.inference_mode(), self._head_input_capture():
             for _ in range(count):
-                encoded_a = self.model.encode_frame(bucket.input_a, bucket.input_a)
-                encoded_b = self.model.encode_frame(bucket.input_b, bucket.input_b)
+                encoded_a = self.model.encode_frame(bucket.input_a, bucket.input_a, segments=bucket.segments_a)
+                encoded_b = self.model.encode_frame(bucket.input_b, bucket.input_b, segments=bucket.segments_b)
                 output_ab = self.model.decode_pair(
                     encoded_a, encoded_b, None, self.uncertainty
                 )
                 flow_ab = output_ab[0][0][0].permute(0, 2, 1).contiguous()
                 if self.uncertainty_head is not None:
-                    self._flow_cholesky(bucket.input_a, flow_ab)
+                    self._flow_cholesky(bucket.input_a, flow_ab, bucket.scale_a, bucket.segments_a)
                 output_ba = self.model.decode_pair(
                     encoded_b, encoded_a, None, self.uncertainty
                 )
                 flow_ba = output_ba[0][0][0].permute(0, 2, 1).contiguous()
                 if self.uncertainty_head is not None:
-                    self._flow_cholesky(bucket.input_b, flow_ba)
+                    self._flow_cholesky(bucket.input_b, flow_ba, bucket.scale_b, bucket.segments_b)
 
         current.wait_stream(setup)
         torch.cuda.synchronize(self.device)
@@ -323,6 +392,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                 bucket.encoded_a = self.model.encode_frame(
                     bucket.input_a,
                     bucket.input_a,
+                    segments=bucket.segments_a,
                 )
 
         with torch.cuda.graph(bucket.encode_graph_b):
@@ -330,6 +400,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                 bucket.encoded_b = self.model.encode_frame(
                     bucket.input_b,
                     bucket.input_b,
+                    segments=bucket.segments_b,
                 )
 
         bucket.encode_graph_a.replay()
@@ -355,7 +426,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                 )
                 bucket.warped_ab = bucket.input_a + bucket.flow_ab
                 if self.uncertainty_head is not None:
-                    bucket.chol_ab = self._flow_cholesky(bucket.input_a, bucket.flow_ab)
+                    bucket.chol_ab = self._flow_cholesky(bucket.input_a, bucket.flow_ab, bucket.scale_a, bucket.segments_a)
 
         with torch.cuda.graph(bucket.decode_graph_ba):
             with torch.inference_mode(), self._head_input_capture():
@@ -373,10 +444,11 @@ class DifFlow3DStreamingCudaGraphRunner:
                 )
                 bucket.warped_ba = bucket.input_b + bucket.flow_ba
                 if self.uncertainty_head is not None:
-                    bucket.chol_ba = self._flow_cholesky(bucket.input_b, bucket.flow_ba)
+                    bucket.chol_ba = self._flow_cholesky(bucket.input_b, bucket.flow_ba, bucket.scale_b, bucket.segments_b)
 
         torch.cuda.synchronize(self.device)
-        self.reset()
+        # Streaming state is untouched: a lazy capture runs between staging a frame and replaying it.
+        self.capture_count += 1
 
     # ------------------------------------------------------------------
     # Non-synchronizing detailed profiler
@@ -531,7 +603,6 @@ class DifFlow3DStreamingCudaGraphRunner:
         slot = self._next_slot
         previous = self._previous_slot
         bucket = int(prepared.info["bucket"])
-        transform = self._frame_transform(prepared.world_points)
         if previous is not None:
             previous_prepared = self._slot_prepared[previous]
             assert previous_prepared is not None
@@ -539,54 +610,81 @@ class DifFlow3DStreamingCudaGraphRunner:
             previous_natural = self.preprocessor.bucket_for(
                 int(previous_prepared.candidates.shape[0])
             )
-            bucket = min(bucket, previous_natural)
-            # Both frames of a pair share one transform: a re-anchored transform re-stages the
-            # previous frame exactly like a bucket change does (one extra encode).
-            renormalize = (
-                self.normalization is not None
-                and self.normalization.restage_previous
-                and self._slot_transform[previous] is not transform
-            )
-            if self._slot_bucket[previous] != bucket or renormalize:
-                restaged = (
-                    self.preprocessor.refinalize(previous_prepared, bucket)
-                    if self._slot_bucket[previous] != bucket
-                    else previous_prepared
-                )
-                self._stage_into(previous, restaged, bucket, record_profile=False, transform=transform)
-                self._pending_reencode_slot = previous
-                self.reencode_count += 1
+            # ... raised so that both frames' objects fit (segmentation.min_segment_total).
+            segments = max(len(previous_prepared.segment_counts or (0,)), len(prepared.segment_counts or (0,)))
+            bucket = self.preprocessor.fit_segments(min(bucket, previous_natural), segments)
             if int(prepared.info["bucket"]) != bucket:
                 prepared = self.preprocessor.refinalize(prepared, bucket)
+        transform, changed = self._frame_transform(prepared)
+        previous_prepared = None
+        if previous is not None:
+            previous_prepared = self._slot_prepared[previous]
+            if self._slot_bucket[previous] != bucket:
+                previous_prepared = self.preprocessor.refinalize(previous_prepared, bucket)
+        graphs = self._pair_graphs_for(bucket, previous_prepared, prepared)
+        if previous is not None:
+            # Both frames of a pair run one graph and share one transform: a frame encoded in another graph (bucket
+            # or level-1 capacity), at another bucket, or before a re-anchor is re-staged (one extra encode).
+            renormalize = (self.normalization is not None and self.normalization.restage_previous and changed)
+            if (graphs is not self._slot_graphs[previous] or previous_prepared is not self._slot_prepared[previous]
+                    or renormalize):
+                self._stage_into(previous, previous_prepared, graphs, record_profile=False, transform=transform)
+                self._pending_reencode_slot = previous
+                self.reencode_count += 1
         self._pair_bucket = bucket
-        self._stage_into(slot, prepared, bucket, record_profile=True, transform=transform)
+        self._pair_graphs = graphs
+        self._stage_into(slot, prepared, graphs, record_profile=True, transform=transform)
         return prepared.world_points
 
-    def _frame_transform(self, world_points: torch.Tensor) -> Transform:
-        """This frame's model transform: the anchored canonical one, or the plain spatial scale."""
+    def _frame_transform(self, prepared: PreparedModelInput):
+        """This frame's model transform and whether it changed: per object (anchored canonical, frames with
+        point ids), the anchored canonical one for a single cloud, or the plain spatial scale."""
+        world_points = prepared.world_points
+        if self.normalization is not None and prepared.segment_counts is not None:
+            return self.segment_normalization.update(world_points, list(prepared.segment_ids), list(prepared.segment_counts))
         if self.normalization is not None:
-            transform, _ = self.normalization.update(world_points)
-            return transform
+            return self.normalization.update(world_points)
         zero = torch.zeros(3, device=world_points.device, dtype=world_points.dtype)
-        return Transform(center=zero, scale=float(self.spatial_scale), model_center=zero)
+        return Transform(center=zero, scale=float(self.spatial_scale), model_center=zero), False
+
+    def _pair_graphs_for(self, count: int, previous: PreparedModelInput | None,
+                         current: PreparedModelInput) -> _BucketGraphs:
+        """The graph both frames of a pair run: plain for one object, otherwise the segmented graph whose level-1
+        capacity fits both frames' object layouts (the pair has one object set: CommonInstanceFilter)."""
+        layouts = [p.segment_counts or (count,) for p in (previous, current) if p is not None]
+        if max(len(layout) for layout in layouts) <= 1:
+            return self._graphs_for(count, (count,))
+        need = max(level1_total(list(layout)) for layout in layouts)
+        return self._graphs_for(count, layouts[-1], level1_capacity(count, need))
 
     def _stage_into(
         self,
         slot: int,
         prepared: PreparedModelInput,
-        bucket_count: int,
+        bucket: _BucketGraphs,
         *,
         record_profile: bool,
         transform: Transform,
     ) -> None:
-        scale = transform.scale
-        bucket = self._buckets[bucket_count]
+        bucket_count = bucket.num_points
+        if bucket.multi_object:
+            # This slot's object layout (same N0, objects fitting the graph's level-1 capacity).
+            bucket.segments(slot).write(tuple(prepared.segment_counts))
         reference = bucket.input(slot)
         reference.copy_(prepared.world_points.unsqueeze(0), non_blocking=True)
-        if self.normalization is not None:
-            reference.sub_(transform.center).mul_(scale).add_(transform.model_center)
-        elif scale != 1.0:
-            reference.mul_(scale)
+        center, scale = bucket.center(slot), bucket.scale(slot)
+        if isinstance(transform, SegmentTransform):
+            point_center, point_scale = transform.expand(prepared.segment_counts)
+            center.copy_(point_center.unsqueeze(0), non_blocking=True)
+            scale.copy_(point_scale.unsqueeze(0), non_blocking=True)
+            reference.sub_(center).mul_(scale.unsqueeze(2)).add_(transform.model_center)
+        else:
+            center.copy_(transform.center.reshape(1, 1, 3).expand_as(center))
+            scale.fill_(float(transform.scale))
+            if self.normalization is not None:
+                reference.sub_(transform.center).mul_(transform.scale).add_(transform.model_center)
+            elif float(transform.scale) != 1.0:
+                reference.mul_(float(transform.scale))
 
         # Shape checks are metadata-only and stay on the hot path. Expensive
         # finite checks are owned by calibration/debug mode in preprocessing.
@@ -605,18 +703,22 @@ class DifFlow3DStreamingCudaGraphRunner:
 
         self._slot_prepared[slot] = prepared
         self._slot_bucket[slot] = bucket_count
+        self._slot_graphs[slot] = bucket
         self._slot_transform[slot] = transform
         self._slot_selection_indices[slot] = prepared.selection_indices
         self._slot_point_ids[slot] = prepared.point_ids
         self._slot_input_keep_masks[slot] = prepared.input_keep_mask
         info = dict(prepared.info)
-        info["spatial_scale"] = scale
+        info["spatial_scale"] = float(transform.scale) if not isinstance(transform, SegmentTransform) else None
+        info["segment_scales"] = ([self.normalization.model_radius / r for _, r in transform.per_object]
+                                  if isinstance(transform, SegmentTransform) else None)
         if "world_extent" in info:
             info["model_extent"] = tuple(
                 float(v) * scale for v in info["world_extent"]
             )
             info["model_volume"] = float(info["world_volume"]) * scale**3
         self._slot_preprocess_info[slot] = info
+        return bucket
 
     def push_world(
         self,
@@ -641,13 +743,16 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._last_source_slot = None
         self._last_target_slot = None
         self._pair_bucket = None
+        self._pair_graphs = None
         self._pending_reencode_slot = None
         self._current_bucket = None
         self._slot_prepared = [None, None]
         self._slot_bucket = [None, None]
+        self._slot_graphs = [None, None]
         self._slot_transform = [None, None]
         if self.normalization is not None:
             self.normalization.reset()
+            self.segment_normalization.reset()
         self._current_output = None
         self._current_flow = None
         self._current_warped = None
@@ -678,7 +783,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         current_slot = self._next_slot
         if self._pair_bucket is None:
             raise RuntimeError("stage_world()/push() must run before replay_next().")
-        bucket = self._buckets[self._pair_bucket]
+        bucket = self._pair_graphs
         if self._pending_reencode_slot is not None:
             # The previous frame was re-selected at this pair's bucket.
             self._replay_encode(bucket, self._pending_reencode_slot)
@@ -694,8 +799,6 @@ class DifFlow3DStreamingCudaGraphRunner:
         target_slot = current_slot
         self._current_bucket = bucket
         scale = self._decode_scale(source_slot)
-        if self.uncertainty_head is not None:
-            self._stage_head_scale(scale)
 
         if self.enable_profiling and self._profile_active:
             decode_start = torch.cuda.Event(enable_timing=True)
@@ -726,6 +829,12 @@ class DifFlow3DStreamingCudaGraphRunner:
             self._profile_pair("decode_ms", decode_start, decode_end)
 
         self._current_scale = scale
+        # Per-object frames: snapshot of the source frame's per-point transform at decode time (the next
+        # stage_world() may re-anchor, i.e. rewrite, the slot's live buffers, and the world outputs must keep the
+        # transform this pair was decoded at). Single-cloud frames keep the scalar path (bit-identical outputs).
+        per_object = isinstance(self._slot_transform[source_slot], SegmentTransform)
+        self._current_scale_points = bucket.scale(source_slot).clone() if per_object else None
+        self._current_center_points = bucket.center(source_slot).clone() if per_object else None
         self._last_source_slot = source_slot
         self._last_target_slot = target_slot
         self._previous_slot = target_slot
@@ -739,17 +848,9 @@ class DifFlow3DStreamingCudaGraphRunner:
             return None
         return self._slot_scale(source_slot)
 
-    def _stage_head_scale(self, value: float | None) -> None:
-        """Set the head's scale input to the decoded pair's model units per metre (on-device fill, no host sync)."""
-        if value is None:
-            raise RuntimeError("The uncertainty head needs the spatial scale; it has not been calibrated yet.")
-        if value != self._head_scale_value:
-            self._head_scale.fill_(value)
-            self._head_scale_value = value
-
     def push(self, frame: torch.Tensor):
         """Legacy fixed-size model-space copy + replay API (one bucket per stream)."""
-        if frame.dim() != 3 or int(frame.shape[1]) not in self._buckets:
+        if frame.dim() != 3 or int(frame.shape[1]) not in self.point_buckets:
             raise ValueError(
                 f"frame must have shape (batch, N, 3) with N in {self.point_buckets}; "
                 f"got {tuple(frame.shape)}."
@@ -759,7 +860,9 @@ class DifFlow3DStreamingCudaGraphRunner:
             raise ValueError(
                 "push() keeps one point count per stream; call reset() to change it."
             )
-        reference = self._buckets[count].input(self._next_slot)
+        graphs = self._buckets[self._graph_key(count, (count,))]
+        self._pair_graphs = graphs
+        reference = graphs.input(self._next_slot)
         if frame.device != reference.device:
             raise ValueError(
                 f"frame must be on {reference.device}, got {frame.device}."
@@ -770,6 +873,9 @@ class DifFlow3DStreamingCudaGraphRunner:
                 f"{reference.dtype}; got {tuple(frame.shape)} and {frame.dtype}."
             )
         reference.copy_(frame, non_blocking=True)
+        # Model-space input: no centring; the (possibly uncalibrated) spatial scale maps the outputs back.
+        graphs.center(self._next_slot).zero_()
+        graphs.scale(self._next_slot).fill_(float(self.spatial_scale) if not self.preprocessor.needs_spatial_scale_calibration else 1.0)
         self._pair_bucket = count
         self._slot_bucket[self._next_slot] = count
         return self.replay_next()
@@ -822,11 +928,21 @@ class DifFlow3DStreamingCudaGraphRunner:
         transform = self._slot_transform[slot] if slot is not None else None
         if self.normalization is None or transform is None:
             return points / self.spatial_scale
-        return (points - transform.model_center) / transform.scale + transform.center
+        if not isinstance(transform, SegmentTransform):
+            return (points - transform.model_center) / transform.scale + transform.center
+        if slot == self._last_source_slot and self._current_scale_points is not None:
+            scale, center = self._current_scale_points, self._current_center_points     # decode-time snapshot
+        else:
+            bucket = self._current_bucket
+            scale, center = bucket.scale(slot), bucket.center(slot)
+        return (points - transform.model_center) / scale.unsqueeze(2) + center
 
-    def _slot_scale(self, slot: int | None) -> float:
-        """Model units per world unit of a staged frame: its canonical transform's k, else the spatial scale."""
+    def _slot_scale(self, slot: int | None) -> float | None:
+        """Model units per world unit of a staged single-cloud frame (None for per-object transforms: use the
+        per-point scale buffers)."""
         transform = self._slot_transform[slot] if slot is not None else None
+        if isinstance(transform, SegmentTransform):
+            return None
         if self.normalization is not None and transform is not None:
             return transform.scale
         return self.spatial_scale
@@ -835,6 +951,8 @@ class DifFlow3DStreamingCudaGraphRunner:
         """Flow of the last decoded pair in world units, with the scale that pair was decoded at: still valid after
         the next stage_world() (which may re-anchor the source slot), until the next replay_next()."""
         flow = self.flow()
+        if self._current_scale_points is not None:
+            return flow / self._current_scale_points.unsqueeze(2)
         scale = self._current_scale
         if scale is None:
             # push() before the automatic spatial scale was calibrated: the current scale (raises while uncalibrated).
@@ -870,9 +988,11 @@ class DifFlow3DStreamingCudaGraphRunner:
         """New ``[B,N,3,3]`` covariance (m^2) of the displacement of each source anchor, row-aligned with flow_world();
         like flow_world() it uses the decode-time scale, so it stays valid until the next replay_next()."""
         chol = self.flow_chol_model()
-        scale = self._current_scale
         # Elementwise L L^T: exact fp32 and exactly symmetric (a batched GEMM may run in TF32).
         covariance = (chol.unsqueeze(-2) * chol.unsqueeze(-3)).sum(dim=-1)
+        if self._current_scale_points is not None:
+            return covariance / (self._current_scale_points ** 2)[..., None, None]
+        scale = self._current_scale
         return covariance / (scale * scale)
 
     # ------------------------------------------------------------------

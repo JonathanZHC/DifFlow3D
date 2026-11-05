@@ -184,12 +184,12 @@ class RecordingHead(torch.nn.Module):
         self.head = head
         self.captured: dict[tuple[int, str], dict[str, torch.Tensor]] = {}
 
-    def forward(self, xyz, feat, u, flow, *, kk):
-        if torch.cuda.is_current_stream_capturing():
+    def forward(self, xyz, feat, u, flow, *, kk, seg=None):
+        if torch.cuda.is_current_stream_capturing() and seg is None:     # the single-cloud graphs only
             count = int(xyz.shape[1])
             direction = "ba" if (count, "ab") in self.captured else "ab"
             self.captured[(count, direction)] = {"xyz": xyz, "feat": feat, "u": u, "flow": flow, "kk": kk}
-        return self.head(xyz, feat, u, flow, kk=kk)
+        return self.head(xyz, feat, u, flow, kk=kk, seg=seg)
 
 
 def make_runner(model, head):
@@ -407,7 +407,7 @@ def check_captured_vs_eager(runner, recorder, model, head, clouds) -> None:
         static = recorder.captured[(count, direction)]
         scale = runner._slot_scale(runner._last_source_slot)
         assert runner._current_scale == scale, (runner._current_scale, scale)
-        assert abs(float(static["kk"][0]) - scale) <= 1e-6 * scale, (float(static["kk"][0]), scale)
+        assert abs(float(static["kk"].reshape(-1)[0]) - scale) <= 1e-6 * scale, (float(static["kk"].reshape(-1)[0]), scale)
         chol_graph = runner.flow_chol_model().clone()
         flow_graph = runner.flow().clone()
         feat_graph, u_graph = static["feat"].clone(), static["u"].clone()
@@ -489,7 +489,7 @@ def check_stream(runner, recorder, model, head, pairs: Pairs | None) -> None:
         direction = "ab" if source_slot == 0 else "ba"
         count = runner.current_point_count()
         k = runner._slot_scale(source_slot)
-        kk = float(runner._head_scale[0])
+        kk = float(runner._current_scale)
         chol = runner.flow_chol_model().clone()
         flow_graph = runner.flow().clone()
         static = recorder.captured[(count, direction)]
@@ -578,7 +578,7 @@ def check_runner(runner, plain, pairs: Pairs | None, calibration: dict | None) -
         assert torch.equal(cov, cov.transpose(-1, -2)), "covariance not symmetric"
         assert int(torch.linalg.cholesky_ex(cov.double())[1].max()) == 0, "covariance not positive definite"
         scale = runner._slot_scale(runner._last_source_slot)
-        assert abs(float(runner._head_scale[0]) - scale) <= 1e-6 * scale
+        assert abs(float(runner._current_scale) - scale) <= 1e-6 * scale
         radius = torch.linalg.det(cov.double()).pow(1.0 / 6.0)[0]
         radii.append(radius)
         buckets[runner.current_point_count()] = buckets.get(runner.current_point_count(), 0) + 1

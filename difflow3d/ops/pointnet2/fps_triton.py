@@ -71,3 +71,77 @@ def furthest_point_sample(xyz: torch.Tensor, npoint: int) -> torch.Tensor:
     _fps_kernel[(B,)](xyz, out, N, int(npoint), BS=block_size, LOG_BS=block_size.bit_length() - 1, BLOCK=block,
                       num_warps=num_warps, enable_fp_fusion=False)
     return out
+
+
+@triton.jit
+def _fps_seg_kernel(xyz_ptr, out_ptr, seg_off_ptr, seg_cnt_ptr, seg_out_off_ptr, seg_m_ptr, seg_identity_ptr, m_max,
+                    BS: tl.constexpr, LOG_BS: tl.constexpr, BLOCK: tl.constexpr):
+    """One program per segment of a [N,3] cloud: FPS over points [off, off+n) writing n_out indices (absolute, into
+    N) at out[out_off : out_off + m]. Same arithmetic / tie-break as _fps_kernel per segment, i.e. identical to
+    running the plain kernel on the segment alone (BS = the plain kernel's block size for THAT segment's n, so the
+    segments must share one BS: the caller groups segments by it, or passes the smallest)."""
+    s = tl.program_id(0)
+    off = tl.load(seg_off_ptr + s)
+    n = tl.load(seg_cnt_ptr + s)
+    out_off = tl.load(seg_out_off_ptr + s)
+    m = tl.load(seg_m_ptr + s)
+    identity = tl.load(seg_identity_ptr + s)
+    if n == 0:
+        return                                  # unused row of a fixed-capacity segment table
+    offs = tl.arange(0, BLOCK)
+    valid = offs < n
+    if identity != 0:
+        # Segment kept whole at this level (n == m): the identity range, in order, like the solo identity path.
+        tl.store(out_ptr + out_off.to(tl.int64) + offs, offs + off, mask=offs < m)
+        return
+    base = xyz_ptr + off.to(tl.int64) * 3
+    x = tl.load(base + offs * 3 + 0, mask=valid, other=0.0)
+    y = tl.load(base + offs * 3 + 1, mask=valid, other=0.0)
+    z = tl.load(base + offs * 3 + 2, mask=valid, other=0.0)
+    dist = tl.full([BLOCK], 1e10, tl.float32)
+    tid = offs % BS
+    rev = tl.zeros([BLOCK], tl.int32)
+    for i in tl.static_range(LOG_BS):
+        rev = rev | (((tid >> i) & 1) << (LOG_BS - 1 - i))
+    tie = (2147483647 - (rev * 65536 + offs)).to(tl.int64)
+    out = out_ptr + out_off.to(tl.int64)
+    tl.store(out, off)
+    old = 0
+    for j in range(1, m_max):
+        x1 = tl.load(base + old * 3 + 0)
+        y1 = tl.load(base + old * 3 + 1)
+        z1 = tl.load(base + old * 3 + 2)
+        dx = x - x1
+        dy = y - y1
+        dz = z - z1
+        d = tl.fma(dz, dz, tl.fma(dx, dx, dy * dy))
+        dist = tl.minimum(d, dist)
+        bits = dist.to(tl.int32, bitcast=True).to(tl.int64)
+        packed = tl.where(valid, (bits << 32) | tie, -1)
+        best = tl.max(packed, axis=0)
+        old = ((2147483647 - (best & 0xFFFFFFFF)) % 65536).to(tl.int32)
+        tl.store(out + j, old + off, mask=j < m)
+
+
+def furthest_point_sample_segments(xyz: torch.Tensor, seg_offsets: torch.Tensor, seg_counts: torch.Tensor,
+                                   seg_out_offsets: torch.Tensor, seg_npoints: torch.Tensor, total_out: int,
+                                   max_count: int, max_npoint: int, seg_identity: torch.Tensor | None = None) -> torch.Tensor:
+    """FPS per contiguous segment of a [N,3] float32 CUDA cloud. seg_* are int32 device arrays [S] (graph-static
+    buffers); total_out, max_count and max_npoint are host ints fixed by the graph key. Returns [total_out] int32
+    indices into N, segment-major; segments flagged in seg_identity (n == npoint) are copied in order instead of
+    sampled (the solo identity level-1 path). The plain kernel's block size BS (which fixes the tie-break order) is taken for
+    max_count; segments with a smaller natural BS get a different, still valid, tie-break."""
+    assert xyz.is_cuda and xyz.is_contiguous() and xyz.dtype == torch.float32 and xyz.dim() == 2 and xyz.shape[1] == 3
+    out = torch.empty((int(total_out),), device=xyz.device, dtype=torch.int32)
+    S = int(seg_offsets.shape[0])
+    if S == 0 or total_out == 0:
+        return out
+    block_size = max(min(1 << int(math.log(max_count) / math.log(2.0)), 1024), 1)
+    block = triton.next_power_of_2(max_count)
+    num_warps = max(1, min(4, block // 32)) if block <= 4096 else (8 if block <= 8192 else 16)
+    if seg_identity is None:
+        seg_identity = torch.zeros_like(seg_counts)
+    _fps_seg_kernel[(S,)](xyz, out, seg_offsets, seg_counts, seg_out_offsets, seg_npoints, seg_identity, int(max_npoint),
+                          BS=block_size, LOG_BS=block_size.bit_length() - 1, BLOCK=block,
+                          num_warps=num_warps, enable_fp_fusion=False)
+    return out

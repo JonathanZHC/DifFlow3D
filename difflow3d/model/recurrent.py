@@ -67,18 +67,18 @@ class RecurrentUnit(nn.Module):
         fe_attrs = ('conv1', 'conv2', 'pos', 'mlp', 'bn', 'relu')
         return all((hasattr(self.bid, name) for name in bid_attrs)) and all((hasattr(self.fe, name) for name in fe_attrs))
 
-    def _prepare_cosine_neighbors(self, feat1, feat2):
+    def _prepare_cosine_neighbors(self, feat1, feat2, seg1=None, seg2=None):
         half_neighbors = self.flow_nei // 2
         # Normalise each feature set once; both directions reuse them.
         feat1_n = l2_normalize_points(feat1.permute(0, 2, 1))
         feat2_n = l2_normalize_points(feat2.permute(0, 2, 1))
-        cosine_12 = knn_point_cosine_prenorm(half_neighbors, feat2_n, feat1_n)
-        cosine_21 = knn_point_cosine_prenorm(half_neighbors, feat1_n, feat2_n)
+        cosine_12 = knn_point_cosine_prenorm(half_neighbors, feat2_n, feat1_n, seg2, seg1)
+        cosine_21 = knn_point_cosine_prenorm(half_neighbors, feat1_n, feat2_n, seg1, seg2)
         # Kept for the next (finer) level's hierarchical candidate search.
         self.last_cosine = (cosine_12, cosine_21)
         return (cosine_12, cosine_21)
 
-    def _prepare_cosine_neighbors_hier(self, feat1, feat2, pc1, pc2, hier_context, children=8):
+    def _prepare_cosine_neighbors_hier(self, feat1, feat2, pc1, pc2, hier_context, children=8, seg1=None, seg2=None):
         """Feature-space neighbours restricted to the dense children of the parent anchor's level-1 matches.
 
         ``hier_context`` = (pc1_l1, pc2_l1, cosine_12_l1, cosine_21_l1) from the previous level. Each dense
@@ -86,16 +86,17 @@ class RecurrentUnit(nn.Module):
         dense points of each match (K * children candidates), so the N^2 feature matrix is never built while
         long-range matches survive.
         """
-        pc1_l1, pc2_l1, cosine_12_l1, cosine_21_l1 = hier_context
+        pc1_l1, pc2_l1, cosine_12_l1, cosine_21_l1, seg1_l1, seg2_l1 = hier_context
         half_neighbors = self.flow_nei // 2
         p1 = pc1.permute(0, 2, 1).contiguous()
         p2 = pc2.permute(0, 2, 1).contiguous()
         q1 = pc1_l1.permute(0, 2, 1).contiguous()
         q2 = pc2_l1.permute(0, 2, 1).contiguous()
-        parent1 = knn_point(1, q1, p1)[..., 0]
-        parent2 = knn_point(1, q2, p2)[..., 0]
-        children2 = knn_point(children, p2, q2)
-        children1 = knn_point(children, p1, q1)
+        # Parents and children within the object: the candidate expansion then stays inside the object too.
+        parent1 = knn_point(1, q1, p1, seg1_l1, seg1)[..., 0]
+        parent2 = knn_point(1, q2, p2, seg2_l1, seg2)[..., 0]
+        children2 = knn_point(children, p2, q2, seg2, seg2_l1)
+        children1 = knn_point(children, p1, q1, seg1, seg1_l1)
         candidates_12 = _expand_hier_candidates(parent1, cosine_12_l1, children2)
         candidates_21 = _expand_hier_candidates(parent2, cosine_21_l1, children1)
         feat1_n = l2_normalize_points(feat1.permute(0, 2, 1))
@@ -105,12 +106,12 @@ class RecurrentUnit(nn.Module):
         self.last_cosine = (cosine_12, cosine_21)
         return (cosine_12, cosine_21)
 
-    def _prepare_spatial_neighbors(self, pc1, pc2):
+    def _prepare_spatial_neighbors(self, pc1, pc2, seg1=None, seg2=None):
         half_neighbors = self.flow_nei // 2
         pc1_n = pc1.permute(0, 2, 1)
         pc2_n = pc2.permute(0, 2, 1)
-        spatial_12 = knn_point(half_neighbors, pc2_n, pc1_n)
-        spatial_21 = knn_point(half_neighbors, pc1_n, pc2_n)
+        spatial_12 = knn_point(half_neighbors, pc2_n, pc1_n, seg2, seg1)
+        spatial_21 = knn_point(half_neighbors, pc1_n, pc2_n, seg1, seg2)
         return (spatial_12, spatial_21)
 
     @staticmethod
@@ -140,30 +141,34 @@ class RecurrentUnit(nn.Module):
         points2 = self.fe.conv2(feat2_new)
         return self._cross_from_combined_context(self.fe, points1, points2, context_12)
 
-    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5, self_knn_context=None, hier_context=None):
+    def forward(self, pc1, pc2, feat1_new, feat2_new, feat1, feat2, up_flow, up_feat, gt_flow=None, certainty=None, uncertainty=0.5, self_knn_context=None, hier_context=None, seg1=None, seg2=None):
         c_feat1 = torch.cat([feat1, feat1_new], dim=1)
         c_feat2 = torch.cat([feat2, feat2_new], dim=1)
         flows = []
         use_fast_cross = not self.training and self._supports_fast_cross_path()
+        if seg1 is not None and not use_fast_cross:
+            raise RuntimeError("segments need the fast (eval) cross path")
         if use_fast_cross:
             if hier_context is not None:
-                cosine_12, cosine_21 = self._prepare_cosine_neighbors_hier(feat1, feat2, pc1, pc2, hier_context)
+                cosine_12, cosine_21 = self._prepare_cosine_neighbors_hier(feat1, feat2, pc1, pc2, hier_context, seg1=seg1, seg2=seg2)
             else:
-                cosine_12, cosine_21 = self._prepare_cosine_neighbors(feat1, feat2)
+                cosine_12, cosine_21 = self._prepare_cosine_neighbors(feat1, feat2, seg1, seg2)
             if self_knn_context is not None:
                 # Source-frame-only geometry precomputed in encode_frame.
                 flow_neighbor_context = self.flow._neighbor_context_from_knn(*self_knn_context)
-            else:
+            elif seg1 is None:
                 flow_neighbor_context = self.flow._prepare_neighbor_context(pc1, pc1)
+            else:
+                raise RuntimeError("segments need the encoder's self-kNN contexts")
             flow_time_per_point = self.flow._prepare_eval_time_per_point(up_flow)
         else:
             cosine_12 = cosine_21 = None
             flow_neighbor_context = None
             flow_time_per_point = None
         for iteration in range(self.iters):
-            pc2_warp = self.warping(pc1, pc2, up_flow)
+            pc2_warp = self.warping(pc1, pc2, up_flow, seg1=seg1, seg2=seg2)
             if use_fast_cross:
-                spatial_12, spatial_21 = self._prepare_spatial_neighbors(pc1, pc2_warp)
+                spatial_12, spatial_21 = self._prepare_spatial_neighbors(pc1, pc2_warp, seg1, seg2)
                 context_12 = self._prepare_combined_cross_context(pc1, pc2_warp, cosine_12, spatial_12)
                 context_21 = self._prepare_combined_cross_context(pc2_warp, pc1, cosine_21, spatial_21)
                 feat1_new, feat2_new = self._bidirectional_fast(c_feat1, c_feat2, context_12, context_21)

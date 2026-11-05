@@ -92,12 +92,14 @@ USE_FUSED_KNN = True
 USE_FUSED_CROSS_BLOCK = True
 
 
-def knn_point(nsample, xyz, new_xyz):
-    """Exact Euclidean KNN.
+def knn_point(nsample, xyz, new_xyz, ref_seg=None, query_seg=None):
+    """Exact Euclidean KNN of ``new_xyz`` queries among ``xyz`` references ([B,N,3]).
 
     3-D coordinate queries on CUDA use the fused register-heap kernel
     (``difflow3d.ops.fused_knn``); everything else falls back to the GEMM +
-    top-k path.
+    top-k path. With segment ids (``[B,M]`` / ``[B,N]`` int32, model.segments)
+    only references of the query's segment are candidates; a segment with fewer than
+    ``nsample`` members repeats its neighbours cyclically.
     """
     if USE_FUSED_KNN and not torch.is_grad_enabled():
         try:
@@ -105,17 +107,30 @@ def knn_point(nsample, xyz, new_xyz):
         except Exception:  # pragma: no cover
             fused_knn = None
         if fused_knn is not None and fused_knn.available(new_xyz, xyz, int(nsample)):
-            return fused_knn.knn_indices(new_xyz, xyz, int(nsample))
+            return fused_knn.knn_indices(new_xyz, xyz, int(nsample), query_seg, ref_seg)
     sqrdists = square_distance(new_xyz, xyz)
+    if ref_seg is not None:
+        sqrdists = sqrdists.masked_fill(query_seg.unsqueeze(2) != ref_seg.unsqueeze(1), float("inf"))
+        values, group_idx = torch.topk(sqrdists, min(int(nsample), sqrdists.shape[-1]), dim=-1, largest=False,
+                                       sorted=True)
+        return _cycle_short_segments(values, group_idx, int(nsample))
     _, group_idx = torch.topk(
         sqrdists, int(nsample), dim=-1, largest=False, sorted=False
     )
     return group_idx
 
 
-def knn_point_with_relative(nsample, xyz, new_xyz):
+def _cycle_short_segments(values, group_idx, k):
+    """Sorted masked top-k -> ``[..., k]`` indices where the masked tail (a segment with fewer than k members)
+    cycles through the valid neighbours, as the fused kernel does."""
+    found = torch.isfinite(values).sum(dim=-1, keepdim=True).clamp_min(1)
+    rank = torch.arange(k, device=group_idx.device).expand(*group_idx.shape[:-1], k)
+    return torch.gather(group_idx, -1, torch.remainder(rank, found))
+
+
+def knn_point_with_relative(nsample, xyz, new_xyz, ref_seg=None, query_seg=None):
     """Return exact KNN indices and ``neighbor_xyz - query_xyz``."""
-    idx = knn_point(nsample, xyz, new_xyz)
+    idx = knn_point(nsample, xyz, new_xyz, ref_seg, query_seg)
     grouped_xyz = index_points_group(xyz, idx)
     return idx, grouped_xyz - new_xyz.unsqueeze(2)
 
@@ -125,9 +140,15 @@ def l2_normalize_points(points):
     return points / torch.sqrt(torch.sum(points ** 2, -1, keepdim=True) + 1.0e-8)
 
 
-def knn_point_cosine_prenorm(nsample, reference_n, query_n):
-    """Cosine KNN on already L2-normalized ``[B,N,C]`` rows (bmm + topk only)."""
+def knn_point_cosine_prenorm(nsample, reference_n, query_n, ref_seg=None, query_seg=None):
+    """Cosine KNN on already L2-normalized ``[B,N,C]`` rows (bmm + topk only); segment ids restrict the
+    candidates to the query's segment (block-diagonal mask)."""
     similarity = torch.bmm(query_n, reference_n.transpose(1, 2))
+    if ref_seg is not None:
+        similarity = similarity.masked_fill(query_seg.unsqueeze(2) != ref_seg.unsqueeze(1), float("-inf"))
+        values, group_idx = torch.topk(similarity, min(int(nsample), similarity.shape[-1]), dim=-1, largest=True,
+                                       sorted=True)
+        return _cycle_short_segments(values, group_idx, int(nsample))
     _, group_idx = torch.topk(
         similarity, int(nsample), dim=-1, largest=True, sorted=False
     )
@@ -219,7 +240,7 @@ def index_points_group(points, knn_idx):
     ).permute(0, 2, 3, 1)
     return new_points
 
-def group(nsample, xyz, points):
+def group(nsample, xyz, points, seg=None):
     """
     Input:
         nsample: scalar
@@ -232,7 +253,7 @@ def group(nsample, xyz, points):
     B, N, C = xyz.shape
     S = N
     new_xyz = xyz
-    idx, grouped_xyz_norm = knn_point_with_relative(nsample, xyz, new_xyz)
+    idx, grouped_xyz_norm = knn_point_with_relative(nsample, xyz, new_xyz, seg, seg)
     if points is not None:
         grouped_points = index_points_group(points, idx)
         new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # [B, npoint, nsample, C+D]
@@ -241,7 +262,7 @@ def group(nsample, xyz, points):
 
     return new_points, grouped_xyz_norm
 
-def group_query(nsample, s_xyz, xyz, s_points):
+def group_query(nsample, s_xyz, xyz, s_points, s_seg=None, seg=None):
     """
     Input:
         nsample: scalar
@@ -255,7 +276,7 @@ def group_query(nsample, s_xyz, xyz, s_points):
     B, N, C = s_xyz.shape
     S = xyz.shape[1]
     new_xyz = xyz
-    idx, grouped_xyz_norm = knn_point_with_relative(nsample, s_xyz, new_xyz)
+    idx, grouped_xyz_norm = knn_point_with_relative(nsample, s_xyz, new_xyz, s_seg, seg)
     if s_points is not None:
         grouped_points = index_points_group(s_points, idx)
         new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # [B, npoint, nsample, C+D]
@@ -356,9 +377,11 @@ class PointConvD(nn.Module):
 
         self.relu = nn.ReLU(inplace=True) if not use_leaky else nn.LeakyReLU(LEAKY_RATE, inplace=True)
 
-    def forward(self, xyz, points, fps_idx=None, new_xyz=None, npoint=None):
+    def forward(self, xyz, points, fps_idx=None, new_xyz=None, npoint=None, seg_fps=None, seg_in=None, seg_out=None):
         """
         PointConv with downsampling to ``npoint`` points (default: the constructor's npoint).
+        seg_fps: per-segment FPS tables (model.segments.fps[l]) -> one FPS per object segment; seg_in / seg_out
+        the segment ids of the input / sampled points (the grouping stays inside the object).
         Input:
             xyz: input points position data, [B, C, N]
             points: input points data, [B, D, N]
@@ -374,12 +397,19 @@ class PointConvD(nn.Module):
 
         if new_xyz is None:
             if fps_idx is None:
-                fps_idx = pointnet2_utils.furthest_point_sample(xyz, npoint)
+                if seg_fps is not None:
+                    from difflow3d.ops.pointnet2 import fps_triton
+                    offsets, counts, out_offsets, npoints, identity, total_out, max_count, max_npoint = seg_fps
+                    fps_idx = fps_triton.furthest_point_sample_segments(
+                        xyz[0], offsets, counts, out_offsets, npoints, total_out, max_count, max_npoint, identity
+                    )[None]
+                else:
+                    fps_idx = pointnet2_utils.furthest_point_sample(xyz, npoint)
             new_xyz = index_points_gather(xyz, fps_idx)
         else:
             new_xyz = new_xyz.permute(0, 2, 1)
 
-        new_points, grouped_xyz_norm = group_query(self.nsample, xyz, new_xyz, points)
+        new_points, grouped_xyz_norm = group_query(self.nsample, xyz, new_xyz, points, seg_in, seg_out)
         grouped_xyz = grouped_xyz_norm.permute(0, 3, 2, 1)
         weights = self.weightnet(grouped_xyz)
         # B, N, S, C
@@ -469,14 +499,11 @@ class CrossLayerLightFeatCosine(nn.Module):
 
         return new_points
 
-    def forward(self, pc1, pc2, feat1, feat2, knn1, knn2):
-        # _, feat1_new = self.fe1_layer(pc1, pc2, feat1, feat2)
-        # _, feat2_new = self.fe1_layer(pc2, pc1, feat2, feat1)
-        # _, feat1_final = self.fe2_layer(pc1, pc2, feat1_new, feat2_new)
-        # flow1 = self.flow(feat1_final)
-
+    def forward(self, pc1, pc2, feat1, feat2, knn1, knn2, seg1=None, seg2=None):
         if not self.training:
-            return self._forward_eval_fast(pc1, pc2, feat1, feat2, knn1, knn2)
+            return self._forward_eval_fast(pc1, pc2, feat1, feat2, knn1, knn2, seg1, seg2)
+        if seg1 is not None:
+            raise RuntimeError("segments are an inference-only feature")
 
         feat1_new = self.cross(pc1, pc2, self.cross_t11(feat1),  self.cross_t22(feat2), knn1, knn2, self.pos1, self.mlp1, self.bn1)
         feat1_new = self.cross_t1(feat1_new)
@@ -487,7 +514,7 @@ class CrossLayerLightFeatCosine(nn.Module):
 
         return feat1_new, feat2_new, feat1_final
 
-    def _forward_eval_fast(self, pc1, pc2, feat1, feat2, knn1, knn2):
+    def _forward_eval_fast(self, pc1, pc2, feat1, feat2, knn1, knn2, seg1=None, seg2=None):
         """Same math as ``forward`` with the neighbourhoods computed once.
 
         The third ``cross`` call receives exactly the same ``pc1, pc2, knn1, knn2``
@@ -501,11 +528,11 @@ class CrossLayerLightFeatCosine(nn.Module):
         xyz2_n = pc2.permute(0, 2, 1)
 
         idx_12 = torch.cat(
-            (knn_point_cosine_prenorm(half, knn2_n, knn1_n), knn_point(half, xyz2_n, xyz1_n)),
+            (knn_point_cosine_prenorm(half, knn2_n, knn1_n, seg2, seg1), knn_point(half, xyz2_n, xyz1_n, seg2, seg1)),
             dim=-1,
         )
         idx_21 = torch.cat(
-            (knn_point_cosine_prenorm(half, knn1_n, knn2_n), knn_point(half, xyz1_n, xyz2_n)),
+            (knn_point_cosine_prenorm(half, knn1_n, knn2_n, seg1, seg2), knn_point(half, xyz1_n, xyz2_n, seg1, seg2)),
             dim=-1,
         )
         context_12 = cross_block_context(pc1, pc2, idx_12)
@@ -645,7 +672,7 @@ class FlowEmbeddingLayer(nn.Module):
 
 class PointWarping(nn.Module):
 
-    def forward(self, xyz1, xyz2, flow1 = None, neighr=3):
+    def forward(self, xyz1, xyz2, flow1 = None, neighr=3, seg1=None, seg2=None):
         if flow1 is None:
             return xyz2
 
@@ -661,7 +688,7 @@ class PointWarping(nn.Module):
 
         # 3 nearest neightbor & use 1/dist as the weights
         knn_idx, grouped_xyz_norm = knn_point_with_relative(
-            neighr, xyz1_to_2, xyz2
+            neighr, xyz1_to_2, xyz2, seg1, seg2
         )  # group flow 1 around points 2
         dist = torch.norm(grouped_xyz_norm, dim = 3).clamp(min = 1e-10) 
         norm = torch.sum(1.0 / dist, dim = 2, keepdim = True) 

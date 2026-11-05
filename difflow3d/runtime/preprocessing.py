@@ -8,6 +8,7 @@ import math
 import torch
 
 from difflow3d.model.encoder import INPUT_POINT_MULTIPLE, MIN_INPUT_POINTS, check_input_points
+from . import segmentation
 from difflow3d.ops.pointnet2 import pointnet2_utils
 from .voxel_outlier import (
     CudaVoxelComponentOutlierFilter,
@@ -40,6 +41,9 @@ class PreparedModelInput:
     candidate_indices: torch.Tensor | None = None
     candidate_point_ids: torch.Tensor | None = None
     candidate_info: dict[str, object] | None = None
+    # Object segments of the anchors (object-major): ids and anchor counts per object (host), None = one cloud.
+    segment_ids: tuple[int, ...] | None = None
+    segment_counts: tuple[int, ...] | None = None
 
 
 class AdaptivePointPreprocessor:
@@ -474,13 +478,25 @@ class AdaptivePointPreprocessor:
             candidate_track_ranks,
         )
 
-    def bucket_for(self, candidate_count: int) -> int:
-        """Largest configured bucket <= ``candidate_count`` (smallest bucket below it)."""
+    def bucket_for(self, candidate_count: int, num_segments: int = 1) -> int:
+        """Largest configured bucket <= ``candidate_count`` (smallest bucket below it), raised to the smallest
+        bucket that holds ``num_segments`` objects (segmentation.min_segment_total)."""
         chosen = self.point_buckets[0]
         for bucket in self.point_buckets:
             if bucket <= candidate_count:
                 chosen = bucket
-        return int(chosen)
+        return self.fit_segments(int(chosen), num_segments)
+
+    def fit_segments(self, bucket: int, num_segments: int) -> int:
+        """``bucket`` or the smallest configured bucket that fits ``num_segments`` objects."""
+        needed = segmentation.min_segment_total(num_segments)
+        if bucket >= needed:
+            return int(bucket)
+        for candidate in self.point_buckets:
+            if candidate >= needed:
+                return int(candidate)
+        raise ValueError(f"{num_segments} objects need >= {needed} anchors; largest bucket is "
+                         f"{self.point_buckets[-1]}")
 
     def _repeat(
         self,
@@ -788,11 +804,20 @@ class AdaptivePointPreprocessor:
             if target_count is not None
             else self.bucket_for(int(candidates.shape[0]))
         )
-        anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
-            candidates,
-            target,
-            mode_prefix,
-        )
+        segments = None
+        if candidate_point_ids is not None:
+            candidates, candidate_indices, candidate_point_ids = self._object_major(
+                candidates, candidate_indices, candidate_point_ids, mode_prefix
+            )
+            anchors, local_indices, unique_count, selection_mode, segments = self._reduce_per_segment(
+                candidates, candidate_point_ids, target, mode_prefix
+            )
+        else:
+            anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
+                candidates,
+                target,
+                mode_prefix,
+            )
 
         if event_after_exact is not None:
             event_after_exact.record()
@@ -822,7 +847,34 @@ class AdaptivePointPreprocessor:
             input_keep_mask,
             timing_events,
             collect_diagnostics,
+            segments,
         )
+
+    def _object_major(self, candidates, candidate_indices, candidate_point_ids, mode_prefix):
+        """Candidates sorted by object id (stable). Voxel-2 output already is (track-major keys); the bypass
+        path keeps the caller's order, which ScenePredictor packs per track as well, so the sort is a no-op there."""
+        if mode_prefix == "voxel2":
+            return candidates, candidate_indices, candidate_point_ids
+        order = torch.argsort(candidate_point_ids.to(torch.int64), stable=True)
+        return (candidates.index_select(0, order).contiguous(), candidate_indices.index_select(0, order).contiguous(),
+                candidate_point_ids.index_select(0, order).contiguous())
+
+    def _reduce_per_segment(self, candidates, candidate_point_ids, target, mode_prefix):
+        """Per-object anchor allocation, selection and Morton order (segmentation.py); one host sync for the
+        per-object candidate counts (the single-cloud path pays the same one in voxel-2's nonzero())."""
+        ids_t, counts_t = segmentation.segment_bounds(candidate_point_ids)
+        ids, counts = [int(v) for v in ids_t.tolist()], [int(v) for v in counts_t.tolist()]
+        target = self.fit_segments(int(target), len(ids))
+        targets = segmentation.allocate_targets(counts, target)
+        cell = (self.second_voxel_size_m or self.second_base_voxel_size_m) if self.sort_anchors_morton else None
+        anchors, local_indices = segmentation.select_per_segment(candidates, counts, targets, cell)
+        unique = sum(min(c, t) for c, t in zip(counts, targets))
+        if len(ids) == 1:          # one object: the legacy selection names (repeat / direct / <selection>)
+            c, t = counts[0], targets[0]
+            mode = f"{mode_prefix}-" + ("repeat" if c < t else "direct" if c == t else self.final_selection)
+        else:
+            mode = f"{mode_prefix}-segments{len(ids)}"
+        return anchors, local_indices, unique, mode, (tuple(ids), tuple(targets))
 
     def _pack(
         self,
@@ -837,6 +889,7 @@ class AdaptivePointPreprocessor:
         input_keep_mask: torch.Tensor,
         timing_events: PreprocessTimingEvents | None,
         collect_diagnostics: bool,
+        segments: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
     ) -> PreparedModelInput:
         target = int(anchors.shape[0])
         # Metadata-only checks; no CUDA synchronization.
@@ -859,6 +912,7 @@ class AdaptivePointPreprocessor:
             "bucket": target,
             "unique_anchor_count": int(unique_count),
             "selection_mode": selection_mode,
+            "segment_counts": segments[1] if segments is not None else None,
         }
         info.pop("mode_prefix", None)
         if collect_diagnostics:
@@ -875,6 +929,8 @@ class AdaptivePointPreprocessor:
             candidate_indices,
             candidate_point_ids,
             candidate_info,
+            segments[0] if segments is not None else None,
+            segments[1] if segments is not None else None,
         )
 
     def refinalize(
@@ -886,11 +942,18 @@ class AdaptivePointPreprocessor:
         if prepared.candidates is None or prepared.candidate_indices is None:
             raise ValueError("refinalize needs a PreparedModelInput with candidates.")
         candidate_info = dict(prepared.candidate_info or {})
-        anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
-            prepared.candidates,
-            int(target_count),
-            str(candidate_info.get("mode_prefix", "first")),
-        )
+        segments = None
+        if prepared.candidate_point_ids is not None:
+            anchors, local_indices, unique_count, selection_mode, segments = self._reduce_per_segment(
+                prepared.candidates, prepared.candidate_point_ids, int(target_count),
+                str(candidate_info.get("mode_prefix", "first")),
+            )
+        else:
+            anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(
+                prepared.candidates,
+                int(target_count),
+                str(candidate_info.get("mode_prefix", "first")),
+            )
         return self._pack(
             anchors,
             local_indices,
@@ -903,6 +966,7 @@ class AdaptivePointPreprocessor:
             prepared.input_keep_mask,
             None,
             False,
+            segments,
         )
 
     def calibrate(self, frame: torch.Tensor) -> dict[str, object]:

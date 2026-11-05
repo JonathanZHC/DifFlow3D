@@ -145,12 +145,14 @@ class PointConvBidirection(nn.Module):
     def _prepare_upsample_context(
         xyz: torch.Tensor,
         sparse_xyz: torch.Tensor,
+        seg: torch.Tensor | None = None,
+        sparse_seg: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         xyz_n = xyz.permute(0, 2, 1)
         sparse_xyz_n = sparse_xyz.permute(0, 2, 1)
 
         indices, relative = knn_point_with_relative(
-            3, sparse_xyz_n.contiguous(), xyz_n.contiguous()
+            3, sparse_xyz_n.contiguous(), xyz_n.contiguous(), sparse_seg, seg
         )
         distance = torch.sqrt(
             torch.sum(relative * relative, dim=3)
@@ -188,8 +190,10 @@ class PointConvBidirection(nn.Module):
         self,
         xyz: torch.Tensor,
         color: torch.Tensor | None = None,
+        segments=None,
     ) -> EncodedFrame:
-        """Encode one ``[B,N,3]`` frame once for adjacent-pair reuse."""
+        """Encode one ``[B,N,3]`` frame once for adjacent-pair reuse. ``segments`` (difflow3d.model.segments.Segments):
+        the frame is several objects concatenated; searches stay inside each object."""
         if self.training:
             raise RuntimeError("encode_frame is an evaluation-only API.")
         if color is None:
@@ -200,26 +204,31 @@ class PointConvBidirection(nn.Module):
         (points, features, indices), level0_knn = self.encoder.forward_with_context(
             xyz_cf,
             color_cf,
+            segments,
         )
         same_l0_l1 = points[0] is points[1]
+        ids = tuple(segments.ids) if segments is not None else (None,) * 5
 
         context_43 = self._prepare_upsample_context(
             points[3],
             points[4],
+            ids[3], ids[4],
         )
         context_32 = self._prepare_upsample_context(
             points[2],
             points[3],
+            ids[2], ids[3],
         )
         context_21 = self._prepare_upsample_context(
             points[1],
             points[2],
+            ids[1], ids[2],
         )
         # See IDENTITY_UPSAMPLE_L1_TO_L0 above.
         context_10 = (
             None
             if same_l0_l1 and IDENTITY_UPSAMPLE_L1_TO_L0
-            else self._prepare_upsample_context(points[0], points[1])
+            else self._prepare_upsample_context(points[0], points[1], ids[0], ids[1])
         )
 
         # Self 9-NN per level for the GRU / flow estimators (source-frame-only).
@@ -229,12 +238,12 @@ class PointConvBidirection(nn.Module):
         if level0_knn is not None and int(level0_knn[0].shape[2]) >= gru_neighbors:
             self_knn_l0 = subset_knn_context(level0_knn[0], level0_knn[1], gru_neighbors)
         else:
-            self_knn_l0 = _self_knn_context(points[0], gru_neighbors)
-        self_knn_l1 = self_knn_l0 if same_l0_l1 else _self_knn_context(points[1], gru_neighbors)
-        self_knn_l2 = _self_knn_context(points[2], int(self.recurrent2.flow.nsample))
+            self_knn_l0 = _self_knn_context(points[0], gru_neighbors, ids[0])
+        self_knn_l1 = self_knn_l0 if same_l0_l1 else _self_knn_context(points[1], gru_neighbors, ids[1])
+        self_knn_l2 = _self_knn_context(points[2], int(self.recurrent2.flow.nsample), ids[2])
         flow3_pointconvs = getattr(self.flow3, "pointconv_list", None)
         flow3_neighbors = int(getattr(flow3_pointconvs[0], "nsample", 9)) if flow3_pointconvs else 9
-        self_knn_l3 = _self_knn_context(points[3], flow3_neighbors)
+        self_knn_l3 = _self_knn_context(points[3], flow3_neighbors, ids[3])
 
         feature_l4_to_l3 = self.deconv4_3(
             self._apply_upsample_context(
@@ -255,6 +264,7 @@ class PointConvBidirection(nn.Module):
             ),
             feature_l4_to_l3=feature_l4_to_l3,
             self_knn_contexts=(self_knn_l0, self_knn_l1, self_knn_l2, self_knn_l3),
+            segment_ids=ids if segments is not None else None,
         )
 
     def _flow3_eval(
@@ -274,10 +284,7 @@ class PointConvBidirection(nn.Module):
         if self_knn_context is not None and int(self_knn_context[0].shape[2]) == neighbors:
             indices, relative_xyz = self_knn_context
         else:
-            indices, relative_xyz = _self_knn_context(
-                xyz,
-                neighbors,
-            )
+            raise RuntimeError("flow3 needs the encoder's level-3 self-kNN context (encode_frame provides it)")
 
         new_points = torch.cat(
             (features, cost_volume),
@@ -322,6 +329,10 @@ class PointConvBidirection(nn.Module):
         feat2s = target.features
         idx1s = source.fps_indices
         idx2s = target.fps_indices
+        seg1 = source.segment_ids if source.segment_ids is not None else (None,) * 5
+        seg2 = target.segment_ids if target.segment_ids is not None else (None,) * 5
+        if (source.segment_ids is None) != (target.segment_ids is None):
+            raise RuntimeError("decode_pair: both frames must carry segment ids, or neither")
 
         _, source_32, source_21, source_10 = (
             source.upsample_contexts
@@ -350,6 +361,7 @@ class PointConvBidirection(nn.Module):
             c_feat2_l3,
             feat1s[3],
             feat2s[3],
+            seg1=seg1[3], seg2=seg2[3],
         )
 
         self_knn = source.self_knn_contexts
@@ -409,6 +421,7 @@ class PointConvBidirection(nn.Module):
             up_certainty2,
             uncertainty,
             self_knn_context=knn_l2,
+            seg1=seg1[2], seg2=seg2[2],
         )
 
         feat1_l2_1 = self.deconv2_1(
@@ -456,6 +469,7 @@ class PointConvBidirection(nn.Module):
             up_certainty1,
             uncertainty,
             self_knn_context=knn_l1,
+            seg1=seg1[1], seg2=seg2[1],
         )
 
         feat1_l1_0 = self.deconv1_0(
@@ -490,7 +504,7 @@ class PointConvBidirection(nn.Module):
             and int(pc1s[0].shape[2]) >= self.hier_cosine_min_points
             and self.recurrent1.last_cosine is not None
         ):
-            hier_context = (pc1s[1], pc2s[1], *self.recurrent1.last_cosine)
+            hier_context = (pc1s[1], pc2s[1], *self.recurrent1.last_cosine, seg1[1], seg2[1])
 
         (
             flows0,
@@ -512,6 +526,7 @@ class PointConvBidirection(nn.Module):
             uncertainty,
             self_knn_context=knn_l0,
             hier_context=hier_context,
+            seg1=seg1[0], seg2=seg2[0],
         )
 
         flows = [

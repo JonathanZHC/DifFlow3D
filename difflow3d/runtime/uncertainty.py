@@ -72,8 +72,10 @@ class FlowCovarianceHead(nn.Module):
         self.register_buffer("pwl_log_scale", torch.tensor([float(v) for v in disp_params]), persistent=False)
 
     def displacement_scale(self, flow: torch.Tensor, kk: torch.Tensor) -> torch.Tensor:
-        """Per-axis std of the displacement-only error model, ``[B,N]`` model units: ``s_mm(|flow| mm) * kk / 1000``."""
-        kk = kk.reshape(-1, 1).float()
+        """Per-axis std of the displacement-only error model, ``[B,N]`` model units: ``s_mm(|flow| mm) * kk / 1000``.
+        ``kk``: model units per metre, ``[B]`` (one scale) or ``[B,N]`` (per point, per-object normalisation)."""
+        kk = kk.float()
+        kk = kk.reshape(-1, 1) if kk.dim() == 1 else kk.reshape(flow.shape[0], flow.shape[1])
         log_disp = torch.log((flow.norm(dim=-1) * (1000.0 / kk)).clamp_min(0.0) + 0.5)
         knots = self.pwl_log_knots
         i = torch.searchsorted(knots, log_disp.contiguous()).clamp(1, knots.numel() - 1)
@@ -89,12 +91,14 @@ class FlowCovarianceHead(nn.Module):
         flow: torch.Tensor,
         kk: torch.Tensor,
         idx: torch.Tensor | None = None,
+        seg: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """``L`` ``[B,N,3,3]`` (model units); ``idx`` = optional precomputed ``[B,N,k]`` self-kNN (self included)."""
+        """``L`` ``[B,N,3,3]`` (model units); ``idx`` = optional precomputed ``[B,N,k]`` self-kNN (self included);
+        ``seg`` = optional ``[B,N]`` object segment ids (neighbours within the object); ``kk`` ``[B]`` or ``[B,N]``."""
         xyz = xyz.float()
         flow = flow.float()
         if idx is None:
-            idx = knn_point(self.k, xyz.contiguous(), xyz.contiguous())
+            idx = knn_point(self.k, xyz.contiguous(), xyz.contiguous(), seg, seg)
         rel = _gather(xyz, idx) - xyz.unsqueeze(2)
         # k-th neighbour distance = the largest of the k (order-free, so any exact kNN ordering gives the same input).
         spacing = rel.norm(dim=-1).amax(dim=-1, keepdim=True)

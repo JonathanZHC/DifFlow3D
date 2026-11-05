@@ -38,18 +38,31 @@ extern "C" __global__ void __launch_bounds__(BLOCK)
 knn_exact(const float* __restrict__ query,     // [B, N, 3]
           const float* __restrict__ reference, // [B, M, 3]
           long long* __restrict__ indices,     // [B, N, K]
+#if SEG
+          const int* __restrict__ qseg,        // [B, N] segment id per query
+          const int* __restrict__ rseg,        // [B, M] segment id per reference
+#endif
           int N, int M)
 {
     __shared__ float tile[TILE * 3];
+#if SEG
+    __shared__ int tile_seg[TILE];
+#endif
     const int b = blockIdx.y;
     const int lane = threadIdx.x & 31;
     const int warp = threadIdx.x >> 5;
     const int n = blockIdx.x * WARPS + warp;
     const bool active = n < N;
     float qx = 0.f, qy = 0.f, qz = 0.f;
+#if SEG
+    int qs = -1;
+#endif
     if (active) {
         const float* q = query + ((size_t)b * N + n) * 3;
         qx = q[0]; qy = q[1]; qz = q[2];
+#if SEG
+        qs = qseg[(size_t)b * N + n];
+#endif
     }
     float best_d[K];
     int   best_i[K];
@@ -60,9 +73,15 @@ knn_exact(const float* __restrict__ query,     // [B, N, 3]
     for (int base = 0; base < M; base += TILE) {
         const int count = min(TILE, M - base);
         for (int i = threadIdx.x; i < count * 3; i += BLOCK) tile[i] = ref[(size_t)base * 3 + i];
+#if SEG
+        for (int i = threadIdx.x; i < count; i += BLOCK) tile_seg[i] = rseg[(size_t)b * M + base + i];
+#endif
         __syncthreads();
         if (active) {
             for (int j = lane; j < count; j += 32) {
+#if SEG
+                if (tile_seg[j] != qs) continue;     // other object: never a neighbour
+#endif
                 const float dx = qx - tile[j * 3 + 0];
                 const float dy = qy - tile[j * 3 + 1];
                 const float dz = qz - tile[j * 3 + 2];
@@ -85,11 +104,13 @@ knn_exact(const float* __restrict__ query,     // [B, N, 3]
 
     // Warp merge of 32 sorted lists -> global top-K.
     long long* out = indices + ((size_t)b * N + n) * K;
+    int found = K;
     for (int r = 0; r < K; ++r) {
         float head = best_d[0];
         float m = head;
 #pragma unroll
         for (int off = 16; off > 0; off >>= 1) m = fminf(m, __shfl_xor_sync(0xffffffffu, m, off));
+        if (m >= INF) { found = r; break; }      // segment smaller than K (uniform across the warp)
         // lowest lane holding the minimum wins (deterministic tie-break)
         const unsigned ballot = __ballot_sync(0xffffffffu, head == m);
         const int winner = __ffs(ballot) - 1;
@@ -101,10 +122,16 @@ knn_exact(const float* __restrict__ query,     // [B, N, 3]
             best_d[K - 1] = INF;
         }
     }
+    // Fewer than K candidates in the query's segment: cycle through the ones found (every member of a small
+    // object becomes a neighbour with near-equal multiplicity; never a point of another object).
+    // No candidate at all (a padding segment's level-1 grouping, model.segments): index 0, a valid read whose
+    // result is never used.
+    if (lane == 0)
+        for (int r = found; r < K; ++r) out[r] = found > 0 ? out[r % found] : 0;
 }
 """
 
-_kernels: dict[tuple[int, int], object] = {}
+_kernels: dict[tuple[int, int, bool], object] = {}
 _disabled = False
 
 
@@ -125,13 +152,14 @@ def available(query: torch.Tensor, reference: torch.Tensor, k: int) -> bool:
     )
 
 
-def _kernel(k: int, device: torch.device):
+def _kernel(k: int, device: torch.device, segmented: bool = False):
     global _disabled
-    key = (int(k), device.index if device.index is not None else torch.cuda.current_device())
+    key = (int(k), device.index if device.index is not None else torch.cuda.current_device(), bool(segmented))
     kernel = _kernels.get(key)
     if kernel is None:
         try:
-            kernel = Module(_SOURCE, name="fused_knn.cu", defines={"K": int(k)}, device=device).get("knn_exact")
+            kernel = Module(_SOURCE, name="fused_knn.cu", defines={"K": int(k), "SEG": int(bool(segmented))},
+                            device=device).get("knn_exact")
         except Exception:  # pragma: no cover - depends on local CUDA toolchain
             _disabled = True
             raise
@@ -139,8 +167,12 @@ def _kernel(k: int, device: torch.device):
     return kernel
 
 
-def knn_indices(query: torch.Tensor, reference: torch.Tensor, k: int) -> torch.Tensor:
-    """``[B,N,3]`` queries, ``[B,M,3]`` references -> ``[B,N,k]`` int64 indices into M."""
+def knn_indices(query: torch.Tensor, reference: torch.Tensor, k: int,
+                query_seg: torch.Tensor | None = None, reference_seg: torch.Tensor | None = None) -> torch.Tensor:
+    """``[B,N,3]`` queries, ``[B,M,3]`` references -> ``[B,N,k]`` int64 indices into M.
+
+    With ``query_seg`` / ``reference_seg`` (``[B,N]`` / ``[B,M]`` int32 segment ids) only references of the
+    query's segment are candidates; a segment with fewer than k references repeats its neighbours cyclically."""
     query = query.contiguous()
     reference = reference.contiguous()
     B, N, _ = query.shape
@@ -148,6 +180,14 @@ def knn_indices(query: torch.Tensor, reference: torch.Tensor, k: int) -> torch.T
     out = torch.empty((B, N, int(k)), dtype=torch.int64, device=query.device)
     if N == 0:
         return out
-    kernel = _kernel(int(k), query.device)
-    kernel.launch(((N + WARPS - 1) // WARPS, B), (BLOCK,), query, reference, out, int(N), M)
+    segmented = query_seg is not None
+    kernel = _kernel(int(k), query.device, segmented)
+    grid = ((N + WARPS - 1) // WARPS, B)
+    if segmented:
+        query_seg = query_seg.to(torch.int32).contiguous()
+        reference_seg = reference_seg.to(torch.int32).contiguous()
+        assert query_seg.shape == (B, N) and reference_seg.shape == (B, M)
+        kernel.launch(grid, (BLOCK,), query, reference, out, query_seg, reference_seg, int(N), M)
+    else:
+        kernel.launch(grid, (BLOCK,), query, reference, out, int(N), M)
     return out

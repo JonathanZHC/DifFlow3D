@@ -10,10 +10,11 @@ from .pointconv import Conv1d, PointConv, PointConvD, index_points_group, knn_po
 def _self_knn_context(
     xyz_channel_first: torch.Tensor,
     neighbors: int,
+    seg: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return self-KNN indices and relative xyz for ``[B,3,N]`` points."""
+    """Return self-KNN indices and relative xyz for ``[B,3,N]`` points (within the point's segment if given)."""
     xyz = xyz_channel_first.permute(0, 2, 1).contiguous()
-    return knn_point_with_relative(neighbors, xyz, xyz)
+    return knn_point_with_relative(neighbors, xyz, xyz, seg, seg)
 
 
 def _pointconv_from_context(
@@ -66,6 +67,8 @@ class EncodedFrame(NamedTuple):
     # 0..3. Source-frame-only geometry used by the GRU/flow estimators; computed
     # once per frame here instead of once per decode (twice at 1024 points).
     self_knn_contexts: tuple[tuple[torch.Tensor, torch.Tensor], ...] = ()
+    # Object segments of this frame (model.segments at encode time): per-level [B, N_l] int32 ids, or None.
+    segment_ids: tuple[torch.Tensor, ...] | None = None
 
 
 def subset_knn_context(
@@ -228,11 +231,15 @@ class PointConvEncoder(nn.Module):
         self,
         xyz: torch.Tensor,
         color: torch.Tensor,
+        segments=None,
     ):
-        """Eval path sharing one 32-NN geometry between levels 0 and 1."""
+        """Eval path sharing one 32-NN geometry between levels 0 and 1. ``segments``: difflow3d.model.segments.Segments
+        of a concatenated multi-object cloud (every search and FPS stays inside the object)."""
+        ids = segments.ids if segments is not None else [None] * 5
         indices, relative_xyz = _self_knn_context(
             xyz,
             int(self.level0.nsample),
+            ids[0],
         )
 
         feat_l0 = self.level0_lift(color)
@@ -251,7 +258,9 @@ class PointConvEncoder(nn.Module):
         # downsampling so recurrent1 stays at level1.npoint.
         point_count = int(xyz.shape[2])
         size_l2, size_l3, size_l4 = coarse_level_sizes(point_count)
-        if point_count <= REFERENCE_POINTS:
+        if segments is not None:
+            size_l2, size_l3, size_l4 = segments.totals[2], segments.totals[3], segments.totals[4]
+        if point_count <= REFERENCE_POINTS if segments is None else segments.identity_l1:
             pc_l1 = xyz
             fps_l1 = self._identity_fps_indices(
                 xyz.shape[0],
@@ -263,6 +272,12 @@ class PointConvEncoder(nn.Module):
                 feat_l0_1,
                 indices,
                 relative_xyz,
+            )
+        elif segments is not None:
+            # Mixed object sizes: every object samples its own level 1 (identity-sized for small objects: FPS
+            # with npoint = n returns a permutation of the object's points).
+            pc_l1, feat_l1, fps_l1 = self.level1(
+                xyz, feat_l0_1, seg_fps=segments.fps[0], seg_in=ids[0], seg_out=ids[1],
             )
         else:
             fps_idx = None
@@ -288,10 +303,12 @@ class PointConvEncoder(nn.Module):
         feat_l1 = self.level1_0(feat_l1)
         feat_l1_2 = self.level1_1(feat_l1)
 
+        seg_fps = segments.fps if segments is not None else (None,) * 4
         pc_l2, feat_l2, fps_l2 = self.level2(
             pc_l1,
             feat_l1_2,
             npoint=size_l2,
+            seg_fps=seg_fps[1], seg_in=ids[1], seg_out=ids[2],
         )
         feat_l2 = self.level2_0(feat_l2)
         feat_l2_3 = self.level2_1(feat_l2)
@@ -300,6 +317,7 @@ class PointConvEncoder(nn.Module):
             pc_l2,
             feat_l2_3,
             npoint=size_l3,
+            seg_fps=seg_fps[2], seg_in=ids[2], seg_out=ids[3],
         )
         feat_l3 = self.level3_0(feat_l3)
         feat_l3_4 = self.level3_1(feat_l3)
@@ -308,6 +326,7 @@ class PointConvEncoder(nn.Module):
             pc_l3,
             feat_l3_4,
             npoint=size_l4,
+            seg_fps=seg_fps[3], seg_in=ids[3], seg_out=ids[4],
         )
 
         self._last_level0_context = (indices, relative_xyz)
@@ -317,17 +336,20 @@ class PointConvEncoder(nn.Module):
             [fps_l1, fps_l2, fps_l3, fps_l4],
         )
 
-    def forward_with_context(self, xyz, color):
+    def forward_with_context(self, xyz, color, segments=None):
         """``forward`` plus the level-0 32-NN context (indices, relative xyz)."""
-        outputs = self.forward(xyz, color)
+        outputs = self.forward(xyz, color, segments)
         context = self._last_level0_context
         self._last_level0_context = None
         return outputs, context
 
-    def forward(self, xyz, color):
+    def forward(self, xyz, color, segments=None):
         if self.training:
             raise RuntimeError(
                 "This minimal model is inference-only. Call model.eval()."
             )
-        check_input_points(int(xyz.shape[2]))
-        return self._forward_eval(xyz, color)
+        if segments is None:
+            check_input_points(int(xyz.shape[2]))
+        elif int(xyz.shape[2]) != segments.totals[0]:
+            raise ValueError(f"segments cover {segments.totals[0]} points, input has {xyz.shape[2]}")
+        return self._forward_eval(xyz, color, segments)
