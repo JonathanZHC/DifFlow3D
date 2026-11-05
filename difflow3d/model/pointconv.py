@@ -303,7 +303,6 @@ class PointConv(nn.Module):
         self.bn = bn
         self.nsample = nsample
         self.weightnet = WeightNet(3, weightnet)
-        #print(f'weightnet {weightnet}')
         self.linear = nn.Linear(weightnet * in_channel, out_channel)
         if bn:
             self.bn_linear = nn.BatchNorm1d(out_channel)
@@ -329,15 +328,10 @@ class PointConv(nn.Module):
         points = points.permute(0, 2, 1)
 
         new_points, grouped_xyz_norm = group(self.nsample, xyz, points) # [B, npoint, nsample, C+D]
-        #print(f'pointsshape {new_points.shape}')
 
         grouped_xyz = grouped_xyz_norm.permute(0, 3, 2, 1)
         weights = self.weightnet(grouped_xyz) #BxWxKxN
-        #print(f'weights {weights.shape}')
         new_points = torch.matmul(input=new_points.permute(0, 1, 3, 2), other = weights.permute(0, 3, 2, 1)).view(B, N, -1) #BxNxWxK * BxNxKxC => BxNxWxC -> BxNx(W*C)
-        #print(f'pointsshape {new_points.shape}')
-        #print(f'pointsshape {new_points.shape}')
-        #print(f'linearweight {self.linear.weight.shape}')
         new_points = self.linear(new_points)
         if self.bn:
             new_points = self.bn_linear(new_points.permute(0, 2, 1))
@@ -372,7 +366,6 @@ class PointConvD(nn.Module):
             new_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
-        #import ipdb; ipdb.set_trace()
         B = xyz.shape[0]
         N = xyz.shape[2]
         xyz = xyz.permute(0, 2, 1).contiguous()
@@ -717,7 +710,6 @@ class SceneFlowEstimatorResidual(nn.Module):
 
         #flow_local = self.fc(new_points).clamp(self.clamp[0], self.clamp[1]) 
         update = self.fc(new_points)
-        #print(f'update {update.shape}')
         flow_local = update[:,:3,:].clamp(self.clamp[0], self.clamp[1]) 
         certainty = update[:,3:,:]
         
@@ -725,8 +717,6 @@ class SceneFlowEstimatorResidual(nn.Module):
             flow = flow_local
         else:
             flow = flow_local + flow
-        #print(f'flow: {flow.shape}')
-        #print(f'points: {new_points.shape}')
         return new_points, flow, certainty
 
 def cosine_beta_schedule(timesteps, s=0.008):

@@ -1,5 +1,6 @@
 from pathlib import Path
 import math
+import os
 
 import torch
 from torch.autograd import Function
@@ -12,6 +13,23 @@ from . import pointnet2_cuda as pointnet2
 
 def extension_path() -> str:
     return str(Path(pointnet2.__file__).resolve())
+
+
+# Furthest point sampling: the Triton kernel (fps_triton.py) returns exactly the indices of the CUDA kernel below
+# (same distance arithmetic and tie-breaking, verified by scripts/test_fps_triton.py). Measured once on an RTX 5090
+# (2026-11-05, CUDA-graph replay): 4096 -> 1024 points 1.21 -> 0.35 ms. Used for float32 CUDA inputs of
+# 1..FPS_TRITON_MAX_POINTS points (the tested range); DIFFLOW3D_FPS_IMPL=cuda forces the original kernel.
+_FPS_IMPL = os.environ.get("DIFFLOW3D_FPS_IMPL", "triton").strip().lower()
+if _FPS_IMPL not in ("triton", "cuda"):
+    raise ValueError(f"DIFFLOW3D_FPS_IMPL must be 'triton' or 'cuda', got {_FPS_IMPL!r}")
+FPS_TRITON_MAX_POINTS = 8192
+try:
+    from . import fps_triton as _fps_triton
+except Exception as exc:  # pragma: no cover - Triton missing or broken: keep the CUDA kernel
+    import warnings
+
+    warnings.warn(f"Triton furthest point sampling unavailable ({exc!r}); using the CUDA kernel")
+    _fps_triton = None
 
 
 class FurthestPointSampling(Function):
@@ -29,6 +47,14 @@ class FurthestPointSampling(Function):
         assert xyz.is_contiguous()
 
         B, N, _ = xyz.size()
+        if (
+            _FPS_IMPL == "triton"
+            and _fps_triton is not None
+            and xyz.is_cuda
+            and xyz.dtype == torch.float32
+            and 1 <= N <= FPS_TRITON_MAX_POINTS
+        ):
+            return _fps_triton.furthest_point_sample(xyz, npoint)
         output = torch.empty((B, npoint), device=xyz.device, dtype=torch.int32)
         temp = torch.full((B, N), 1e10, device=xyz.device, dtype=torch.float32)
 
