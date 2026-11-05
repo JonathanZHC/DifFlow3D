@@ -95,39 +95,83 @@ def level1_total(targets: list[int]) -> int:
     return sum(min(t, REFERENCE_POINTS) for t in targets)
 
 
-def segment_bounds(point_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """``[N]`` object-major ids -> (unique ids in order, counts) on the device (one small sync by the caller)."""
-    change = torch.ones_like(point_ids, dtype=torch.bool)
-    change[1:] = point_ids[1:] != point_ids[:-1]
-    starts = change.nonzero(as_tuple=True)[0]
-    ends = torch.cat([starts[1:], torch.tensor([point_ids.shape[0]], device=point_ids.device)])
-    return point_ids.index_select(0, starts), ends - starts
+def to_device(values, device: torch.device, dtype=torch.int64) -> torch.Tensor:
+    """Small host list/array -> device tensor through pinned memory, without a stream synchronisation (a pageable
+    host->device copy waits for all queued GPU work, which stalls the whole pipeline)."""
+    host = torch.as_tensor(values, dtype=dtype)
+    if device.type != "cuda":
+        return host.to(device)
+    return host.pin_memory().to(device, non_blocking=True)
+
+
+@dataclass(frozen=True)
+class SegmentSummary:
+    """Per-object facts of one object-major candidate cloud, read back in ONE device->host copy."""
+    ids: tuple[int, ...]                                # object (track) id per segment, in order
+    counts: tuple[int, ...]                             # candidates per object
+    centroids: tuple[tuple[float, float, float], ...]   # world centroid of each object's candidates
+    radii: tuple[float, ...]                            # RMS radius about that centroid
+
+
+def summarize_segments(points: torch.Tensor, point_ids: torch.Tensor) -> SegmentSummary:
+    """Segments of contiguous equal ids (object-major) with their count, centroid and RMS radius: one reduction
+    into a fixed [MAX_SEGMENTS, 6] float64 table and one host read (the only sync of the multi-object path; the
+    single-cloud path pays the same one in voxel-2)."""
+    change = torch.ones_like(point_ids, dtype=torch.int64)
+    change[1:] = (point_ids[1:] != point_ids[:-1]).to(torch.int64)
+    seg = torch.cumsum(change, 0) - 1
+    p = points.to(torch.float64)
+    rows = torch.cat([torch.ones_like(p[:, :1]), p, (p * p).sum(1, keepdim=True), point_ids.to(torch.float64)[:, None]], 1)
+    table = torch.zeros((MAX_SEGMENTS + 1, 6), dtype=torch.float64, device=points.device)
+    table.index_add_(0, seg.clamp_max(MAX_SEGMENTS), rows)
+    host = table.cpu().tolist()
+    used = [row for row in host if row[0] > 0]
+    if len(used) > MAX_SEGMENTS:
+        raise ValueError(f"more than {MAX_SEGMENTS} objects per DifFlow input (raise "
+                         "difflow3d.runtime.segmentation.MAX_SEGMENTS above the tracker's total slot capacity)")
+    ids, counts, centroids, radii = [], [], [], []
+    for n, sx, sy, sz, sq, sid in used:
+        c = (sx / n, sy / n, sz / n)
+        ids.append(int(round(sid / n))); counts.append(int(n)); centroids.append(c)
+        radii.append(math.sqrt(max(sq / n - (c[0] ** 2 + c[1] ** 2 + c[2] ** 2), 0.0)))
+    return SegmentSummary(tuple(ids), tuple(counts), tuple(centroids), tuple(radii))
 
 
 def select_per_segment(points: torch.Tensor, counts: list[int], targets: list[int], morton_cell: float | None
-                       ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Uniform-stride selection (repeat when short) and Morton order inside every object segment.
+                       ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Uniform-stride selection (repeat when short) and Morton order inside every object segment, vectorised over
+    the objects (a fixed handful of kernels, no host sync).
 
     points: object-major candidates [N,3]; counts / targets host ints per object. Returns (anchors [T,3], local
-    indices into points [T]) object-major."""
+    indices into points [T], segment index per anchor [T]) object-major."""
     device = points.device
-    pieces = []
-    start = 0
-    for count, target in zip(counts, targets):
-        if count >= target:
-            # rounded linspace over [0, count-1] (the deployed uniform selection), count == target is the identity
-            pos = torch.arange(target, device=device, dtype=torch.long)
-            idx = pos if count == target else torch.div(pos * (count - 1) + (target - 1) // 2, target - 1, rounding_mode="floor")
-        else:
-            idx = torch.arange(count, device=device, dtype=torch.long).repeat((target + count - 1) // count)[:target]
-        idx = idx + start
-        if morton_cell:
-            seg_points = points.index_select(0, idx)
-            idx = idx.index_select(0, morton_order(seg_points, morton_cell))
-        pieces.append(idx)
-        start += count
-    local = torch.cat(pieces).contiguous()
-    return points.index_select(0, local).contiguous(), local
+    total = int(sum(targets))
+    starts = [0]
+    for c in counts[:-1]:
+        starts.append(starts[-1] + int(c))
+    out_starts = [0]
+    for t in targets[:-1]:
+        out_starts.append(out_starts[-1] + int(t))
+    params = to_device([list(counts), list(targets), starts, out_starts], device)       # [4, S]
+    seg = torch.repeat_interleave(torch.arange(len(counts), device=device), params[1], output_size=total)
+    count, target, start = params[0][seg], params[1][seg], params[2][seg]
+    pos = torch.arange(total, device=device) - params[3][seg]
+    # rounded linspace over [0, count-1] (the deployed uniform selection; count == target is the identity), or a
+    # cyclic repeat when the object has fewer candidates than anchors
+    stride = torch.div(pos * (count - 1) + torch.div(target - 1, 2, rounding_mode="floor"),
+                       (target - 1).clamp_min(1), rounding_mode="floor")
+    local = torch.where(count >= target, stride, torch.remainder(pos, count)) + start
+    if morton_cell:
+        selected = points.index_select(0, local)
+        lo = torch.full((len(counts), 3), float("inf"), device=device, dtype=points.dtype)
+        lo = lo.scatter_reduce(0, seg[:, None].expand(-1, 3), selected, reduce="amin", include_self=True)
+        quantized = torch.floor((selected - lo[seg]) / float(morton_cell)).to(torch.int64).clamp_(0, (1 << 16) - 1)
+        key = (_spread_bits(quantized[:, 0]) | (_spread_bits(quantized[:, 1]) << 1)
+               | (_spread_bits(quantized[:, 2]) << 2) | (seg << 50))       # 48 Morton bits below the segment index
+        order = torch.argsort(key)
+        local, seg = local.index_select(0, order), seg.index_select(0, order)
+    local = local.contiguous()
+    return points.index_select(0, local).contiguous(), local, seg
 
 
 def _spread_bits(value: torch.Tensor) -> torch.Tensor:
@@ -140,12 +184,6 @@ def _spread_bits(value: torch.Tensor) -> torch.Tensor:
     return value
 
 
-def morton_order(points: torch.Tensor, cell: float) -> torch.Tensor:
-    quantized = torch.floor((points - points.min(dim=0).values) / float(cell)).to(torch.int64).clamp_(0, (1 << 21) - 1)
-    key = _spread_bits(quantized[:, 0]) | (_spread_bits(quantized[:, 1]) << 1) | (_spread_bits(quantized[:, 2]) << 2)
-    return torch.argsort(key)
-
-
 @dataclass
 class SegmentTransform:
     """Per-object canonical transform: model = (world - center_j) * scale_j + model_center for object j. Shared by
@@ -155,12 +193,9 @@ class SegmentTransform:
     model_center: torch.Tensor    # [3]
     per_object: tuple[tuple[tuple[float, float, float], float], ...]   # host (centroid, radius) per object
 
-    def expand(self, counts) -> tuple[torch.Tensor, torch.Tensor]:
-        """Per-point (center [N,3], scale [N]) of an object-major frame with these per-object counts."""
-        if len(counts) != self.scales.shape[0]:
-            raise ValueError(f"transform has {self.scales.shape[0]} objects, layout {tuple(counts)}")
-        seg = torch.repeat_interleave(torch.arange(len(counts)), torch.tensor(list(counts))).to(self.scales.device)
-        return self.centers.index_select(0, seg), self.scales.index_select(0, seg)
+    def expand(self, segment_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Per-point (center [N,3], scale [N]) of an object-major frame from its per-point segment index."""
+        return self.centers.index_select(0, segment_index), self.scales.index_select(0, segment_index)
 
 
 class SegmentNormalization:
@@ -181,39 +216,31 @@ class SegmentNormalization:
     def reset(self) -> None:
         self._anchors.clear()
 
-    def update(self, points: torch.Tensor, object_ids: list[int], counts: list[int]) -> tuple[SegmentTransform, bool]:
-        """Per-object centroid / RMS radius (one device -> host copy of 4 x S values), hysteresis on the host."""
-        device = points.device
-        seg = torch.repeat_interleave(torch.arange(len(counts), device=device), torch.tensor(counts, device=device))
-        sums = torch.zeros(len(counts), 3, device=device, dtype=points.dtype).index_add_(0, seg, points)
-        n = torch.tensor(counts, device=device, dtype=points.dtype).unsqueeze(1)
-        centers = sums / n
-        d2 = ((points - centers.index_select(0, seg)) ** 2).sum(1)
-        radii = (torch.zeros(len(counts), device=device, dtype=points.dtype).index_add_(0, seg, d2) / n.squeeze(1)).sqrt()
-        stats = torch.cat([centers, radii.unsqueeze(1)], 1).tolist()
+    def update(self, summary: "SegmentSummary", device: torch.device, dtype=torch.float32
+               ) -> tuple[SegmentTransform, bool]:
+        """Per-object hysteresis on the host from the candidates' centroid / RMS radius (SegmentSummary: already
+        read back with the counts); one pinned host->device copy of the S centres and scales."""
         changed = False
         per_object = []
-        use_center, use_scale = [], []
-        for oid, (cx, cy, cz, r) in zip(object_ids, stats):
+        use = []
+        for oid, center, r in zip(summary.ids, summary.centroids, summary.radii):
             r = max(r, 1.0e-6)
             anchor = self._anchors.get(oid)
             if anchor is not None:
-                (ax, ay, az), ar = anchor
-                drift = math.dist((cx, cy, cz), (ax, ay, az))
-                if max(r / ar, ar / r) <= self.scale_ratio and drift <= self.center_shift * ar:
-                    per_object.append(anchor); use_center.append(anchor[0]); use_scale.append(self.model_radius / ar)
+                ac, ar = anchor
+                if max(r / ar, ar / r) <= self.scale_ratio and math.dist(center, ac) <= self.center_shift * ar:
+                    per_object.append(anchor); use.append((*ac, self.model_radius / ar))
                     continue
                 changed = True
                 self.reanchor_count += 1
-            self._anchors[oid] = ((cx, cy, cz), r)
-            per_object.append(self._anchors[oid]); use_center.append((cx, cy, cz)); use_scale.append(self.model_radius / r)
+            self._anchors[oid] = (tuple(center), r)
+            per_object.append(self._anchors[oid]); use.append((*center, self.model_radius / r))
         for oid in list(self._anchors):
-            if oid not in object_ids:
+            if oid not in summary.ids:
                 del self._anchors[oid]
         model_center = self._model_center
-        if model_center is None or model_center.device != device or model_center.dtype != points.dtype:
-            model_center = torch.tensor(self.model_center, device=device, dtype=points.dtype)
+        if model_center is None or model_center.device != device or model_center.dtype != dtype:
+            model_center = torch.tensor(self.model_center, device=device, dtype=dtype)
             self._model_center = model_center
-        centers = torch.tensor(use_center, device=device, dtype=points.dtype)
-        scales = torch.tensor(use_scale, device=device, dtype=points.dtype)
-        return SegmentTransform(centers, scales, model_center, tuple(per_object)), changed
+        packed = to_device(use, device, dtype)                                    # [S, 4]
+        return SegmentTransform(packed[:, :3], packed[:, 3], model_center, tuple(per_object)), changed

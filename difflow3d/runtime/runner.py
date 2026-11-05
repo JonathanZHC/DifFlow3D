@@ -33,6 +33,9 @@ class _ProfileEventPair:
     end: torch.cuda.Event
 
 
+CAPACITY_HYSTERESIS = 1024     # level-1 padding a pair tolerates before it switches to a smaller multi-object graph
+
+
 @dataclass
 class _BucketGraphs:
     """Static inputs, captured CUDA graphs and outputs for one graph shape: (N0 anchors, N1 level-1 points).
@@ -267,11 +270,17 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
 
+        # CUDA graph memory: one pool per graph role, shared by the graphs of every shape. Only one shape runs at
+        # a time and a pair that switches shape re-encodes both slots in the new one (stage_world), so a graph
+        # never reads another shape's outputs; within a shape the roles keep separate pools, because the a/b
+        # encodings alternate and must not clobber each other. Captured largest first so smaller shapes reuse it.
+        self._graph_pools = {role: torch.cuda.graph_pool_handle()
+                             for role in ("encode_a", "encode_b", "decode_ab", "decode_ba")}
         self.capture_count = 0          # graph sets captured (a multi-object shape missing here is captured lazily)
-        for bucket in self._buckets.values():
-            self._capture(bucket, int(warmup))
         for count, capacity, _ in multi_keys:
-            self._graphs_for(count, (count,), capacity)
+            self._buckets[(count, capacity, True)] = self._new_multi_graphs(count, capacity)
+        for key in sorted(self._buckets, key=lambda k: (k[0], k[1]), reverse=True):
+            self._capture(self._buckets[key], int(warmup))
         self.reset()
 
     @staticmethod
@@ -293,16 +302,21 @@ class DifFlow3DStreamingCudaGraphRunner:
             scale_b=torch.ones((self.batch_size, int(count)), device=self.device),
         )
 
+    def _new_multi_graphs(self, count: int, capacity: int) -> _BucketGraphs:
+        bucket = self._new_graphs(count, capacity)
+        # A representative layout for capture (one object + padding): the segment tables are rewritten per frame.
+        for name in ("segments_a", "segments_b"):
+            setattr(bucket, name, Segments((int(count),), self.model.level1_points, self.device,
+                                           level1_total=int(capacity)))
+        return bucket
+
     def _graphs_for(self, count: int, segment_counts, capacity: int | None = None) -> _BucketGraphs:
         """Graphs of this shape (``capacity`` forces a multi-object shape), captured on first use."""
         key = (int(count), int(capacity), True) if capacity is not None else self._graph_key(count, segment_counts)
         bucket = self._buckets.get(key)
         if bucket is None:
-            bucket = self._new_graphs(key[0], key[1])
-            # A representative layout for capture: the segment table is rewritten per frame anyway.
-            for name in ("segments_a", "segments_b"):
-                setattr(bucket, name, Segments(tuple(int(c) for c in segment_counts), self.model.level1_points,
-                                               self.device, level1_total=key[1]))
+            bucket = (self._new_multi_graphs(key[0], key[1]) if key[2] else
+                      self._new_graphs(key[0], key[1]))
             self._capture(bucket, self._warmup_count)
             self._buckets[key] = bucket
         return bucket
@@ -387,7 +401,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         bucket.input_b.normal_(0.0, 0.25)
         self._warmup(bucket, warmup)
 
-        with torch.cuda.graph(bucket.encode_graph_a):
+        with torch.cuda.graph(bucket.encode_graph_a, pool=self._graph_pools["encode_a"]):
             with torch.inference_mode():
                 bucket.encoded_a = self.model.encode_frame(
                     bucket.input_a,
@@ -395,7 +409,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                     segments=bucket.segments_a,
                 )
 
-        with torch.cuda.graph(bucket.encode_graph_b):
+        with torch.cuda.graph(bucket.encode_graph_b, pool=self._graph_pools["encode_b"]):
             with torch.inference_mode():
                 bucket.encoded_b = self.model.encode_frame(
                     bucket.input_b,
@@ -410,7 +424,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         assert bucket.encoded_a is not None
         assert bucket.encoded_b is not None
 
-        with torch.cuda.graph(bucket.decode_graph_ab):
+        with torch.cuda.graph(bucket.decode_graph_ab, pool=self._graph_pools["decode_ab"]):
             with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ab = self.model.decode_pair(
                     bucket.encoded_a,
@@ -428,7 +442,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                 if self.uncertainty_head is not None:
                     bucket.chol_ab = self._flow_cholesky(bucket.input_a, bucket.flow_ab, bucket.scale_a, bucket.segments_a)
 
-        with torch.cuda.graph(bucket.decode_graph_ba):
+        with torch.cuda.graph(bucket.decode_graph_ba, pool=self._graph_pools["decode_ba"]):
             with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ba = self.model.decode_pair(
                     bucket.encoded_b,
@@ -641,7 +655,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         point ids), the anchored canonical one for a single cloud, or the plain spatial scale."""
         world_points = prepared.world_points
         if self.normalization is not None and prepared.segment_counts is not None:
-            return self.segment_normalization.update(world_points, list(prepared.segment_ids), list(prepared.segment_counts))
+            return self.segment_normalization.update(prepared.segment_summary, world_points.device, world_points.dtype)
         if self.normalization is not None:
             return self.normalization.update(world_points)
         zero = torch.zeros(3, device=world_points.device, dtype=world_points.dtype)
@@ -655,6 +669,12 @@ class DifFlow3DStreamingCudaGraphRunner:
         if max(len(layout) for layout in layouts) <= 1:
             return self._graphs_for(count, (count,))
         need = max(level1_total(list(layout)) for layout in layouts)
+        # Hysteresis: keep the previous frame's graph while it fits and pads less than CAPACITY_HYSTERESIS
+        # (switching re-encodes the previous frame); the per-frame split moves the need across steps often.
+        held = self._slot_graphs[self._previous_slot] if self._previous_slot is not None else None
+        if (held is not None and held.multi_object and held.num_points == count
+                and need <= held.level1_points < need + CAPACITY_HYSTERESIS):
+            return held
         return self._graphs_for(count, layouts[-1], level1_capacity(count, need))
 
     def _stage_into(
@@ -674,7 +694,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         reference.copy_(prepared.world_points.unsqueeze(0), non_blocking=True)
         center, scale = bucket.center(slot), bucket.scale(slot)
         if isinstance(transform, SegmentTransform):
-            point_center, point_scale = transform.expand(prepared.segment_counts)
+            point_center, point_scale = transform.expand(prepared.segment_index)
             center.copy_(point_center.unsqueeze(0), non_blocking=True)
             scale.copy_(point_scale.unsqueeze(0), non_blocking=True)
             reference.sub_(center).mul_(scale.unsqueeze(2)).add_(transform.model_center)

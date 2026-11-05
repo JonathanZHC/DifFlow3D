@@ -44,6 +44,10 @@ class PreparedModelInput:
     # Object segments of the anchors (object-major): ids and anchor counts per object (host), None = one cloud.
     segment_ids: tuple[int, ...] | None = None
     segment_counts: tuple[int, ...] | None = None
+    # Per-object candidate summary (counts, centroids, radii; read back once, reused by refinalize) and the segment
+    # index of every anchor (device).
+    segment_summary: segmentation.SegmentSummary | None = None
+    segment_index: torch.Tensor | None = None
 
 
 class AdaptivePointPreprocessor:
@@ -859,22 +863,24 @@ class AdaptivePointPreprocessor:
         return (candidates.index_select(0, order).contiguous(), candidate_indices.index_select(0, order).contiguous(),
                 candidate_point_ids.index_select(0, order).contiguous())
 
-    def _reduce_per_segment(self, candidates, candidate_point_ids, target, mode_prefix):
-        """Per-object anchor allocation, selection and Morton order (segmentation.py); one host sync for the
-        per-object candidate counts (the single-cloud path pays the same one in voxel-2's nonzero())."""
-        ids_t, counts_t = segmentation.segment_bounds(candidate_point_ids)
-        ids, counts = [int(v) for v in ids_t.tolist()], [int(v) for v in counts_t.tolist()]
+    def _reduce_per_segment(self, candidates, candidate_point_ids, target, mode_prefix, summary=None):
+        """Per-object anchor allocation, selection and Morton order (segmentation.py). One host sync reads the
+        per-object candidate counts and statistics (the single-cloud path pays the same one in voxel-2's
+        nonzero()); a re-selection of the same candidates (``summary`` given) needs none."""
+        if summary is None:
+            summary = segmentation.summarize_segments(candidates, candidate_point_ids)
+        ids, counts = list(summary.ids), list(summary.counts)
         target = self.fit_segments(int(target), len(ids))
         targets = segmentation.allocate_targets(counts, target)
         cell = (self.second_voxel_size_m or self.second_base_voxel_size_m) if self.sort_anchors_morton else None
-        anchors, local_indices = segmentation.select_per_segment(candidates, counts, targets, cell)
+        anchors, local_indices, segment_index = segmentation.select_per_segment(candidates, counts, targets, cell)
         unique = sum(min(c, t) for c, t in zip(counts, targets))
         if len(ids) == 1:          # one object: the legacy selection names (repeat / direct / <selection>)
             c, t = counts[0], targets[0]
             mode = f"{mode_prefix}-" + ("repeat" if c < t else "direct" if c == t else self.final_selection)
         else:
             mode = f"{mode_prefix}-segments{len(ids)}"
-        return anchors, local_indices, unique, mode, (tuple(ids), tuple(targets))
+        return anchors, local_indices, unique, mode, (summary, tuple(targets), segment_index)
 
     def _pack(
         self,
@@ -889,7 +895,7 @@ class AdaptivePointPreprocessor:
         input_keep_mask: torch.Tensor,
         timing_events: PreprocessTimingEvents | None,
         collect_diagnostics: bool,
-        segments: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
+        segments: tuple | None = None,
     ) -> PreparedModelInput:
         target = int(anchors.shape[0])
         # Metadata-only checks; no CUDA synchronization.
@@ -929,8 +935,10 @@ class AdaptivePointPreprocessor:
             candidate_indices,
             candidate_point_ids,
             candidate_info,
-            segments[0] if segments is not None else None,
+            segments[0].ids if segments is not None else None,
             segments[1] if segments is not None else None,
+            segments[0] if segments is not None else None,
+            segments[2] if segments is not None else None,
         )
 
     def refinalize(
@@ -946,7 +954,7 @@ class AdaptivePointPreprocessor:
         if prepared.candidate_point_ids is not None:
             anchors, local_indices, unique_count, selection_mode, segments = self._reduce_per_segment(
                 prepared.candidates, prepared.candidate_point_ids, int(target_count),
-                str(candidate_info.get("mode_prefix", "first")),
+                str(candidate_info.get("mode_prefix", "first")), prepared.segment_summary,
             )
         else:
             anchors, local_indices, unique_count, selection_mode = self._reduce_to_count(

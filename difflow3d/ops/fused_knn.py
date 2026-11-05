@@ -70,8 +70,27 @@ knn_exact(const float* __restrict__ query,     // [B, N, 3]
     for (int k = 0; k < K; ++k) { best_d[k] = INF; best_i[k] = 0; }
 
     const float* ref = reference + (size_t)b * M * 3;
-    for (int base = 0; base < M; base += TILE) {
-        const int count = min(TILE, M - base);
+    int range_begin = 0, range_end = M;
+#if SEG
+    // Segments are contiguous and ascending in both inputs (object-major): the block only scans the references of
+    // the segments its queries belong to, [lower_bound(first query's id), upper_bound(last query's id)).
+    __shared__ int range[2];
+    if (threadIdx.x == 0) {
+        const int* rs = rseg + (size_t)b * M;
+        const int first = qseg[(size_t)b * N + blockIdx.x * WARPS];
+        const int last = qseg[(size_t)b * N + min(N - 1, blockIdx.x * WARPS + WARPS - 1)];
+        int lo = 0, hi = M;
+        while (lo < hi) { const int mid = (lo + hi) >> 1; if (rs[mid] < first) lo = mid + 1; else hi = mid; }
+        range[0] = lo;
+        hi = M;
+        while (lo < hi) { const int mid = (lo + hi) >> 1; if (rs[mid] <= last) lo = mid + 1; else hi = mid; }
+        range[1] = lo;
+    }
+    __syncthreads();
+    range_begin = range[0]; range_end = range[1];
+#endif
+    for (int base = range_begin; base < range_end; base += TILE) {
+        const int count = min(TILE, range_end - base);
         for (int i = threadIdx.x; i < count * 3; i += BLOCK) tile[i] = ref[(size_t)base * 3 + i];
 #if SEG
         for (int i = threadIdx.x; i < count; i += BLOCK) tile_seg[i] = rseg[(size_t)b * M + base + i];
@@ -171,8 +190,9 @@ def knn_indices(query: torch.Tensor, reference: torch.Tensor, k: int,
                 query_seg: torch.Tensor | None = None, reference_seg: torch.Tensor | None = None) -> torch.Tensor:
     """``[B,N,3]`` queries, ``[B,M,3]`` references -> ``[B,N,k]`` int64 indices into M.
 
-    With ``query_seg`` / ``reference_seg`` (``[B,N]`` / ``[B,M]`` int32 segment ids) only references of the
-    query's segment are candidates; a segment with fewer than k references repeats its neighbours cyclically."""
+    With ``query_seg`` / ``reference_seg`` (``[B,N]`` / ``[B,M]`` int32 segment ids, each ascending: object-major
+    inputs) only references of the query's segment are candidates and only that range is scanned; a segment with
+    fewer than k references repeats its neighbours cyclically."""
     query = query.contiguous()
     reference = reference.contiguous()
     B, N, _ = query.shape

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import numpy as np
 import torch
 
 from .encoder import INPUT_POINT_MULTIPLE, REFERENCE_POINTS
@@ -59,9 +60,10 @@ class Segments:
     refills them for any layout of N0 points whose objects fit N1, so a captured graph serves every split.
 
     Objects are segments 0..S-1. When the objects need fewer level-1 points than the capacity, the remainder is a
-    padding segment (id S, no level-0 points): FPS samples it from the whole input, it has its own levels
-    1..4 (P, P/2, P/4, P/16), and since every neighbour search is restricted to the query's segment id, no real
-    point ever reads it (its level-1 grouping finds no level-0 member and reads point 0; its outputs are unused)."""
+    padding segment (id S, no level-0 points): a prefix copy of the first input points (never sampled), with its
+    own levels 1..4 (P, P/2, P/4, P/16); since every neighbour search is restricted to the query's segment id, no
+    real point ever reads it (its level-1 grouping finds no level-0 member and reads point 0; its outputs are
+    unused)."""
 
     def __init__(self, counts: tuple[int, ...], level1_points: int, device: torch.device,
                  level1_total: int | None = None) -> None:
@@ -80,9 +82,27 @@ class Segments:
         # The identity level-1 shortcut (level 0 reused as level 1) is a graph property: every object of every
         # layout must be at most level1_points, i.e. N0 itself is.
         self.identity_l1 = n0 <= self.level1_points and self.level1_total == n0
-        self.ids: list[torch.Tensor] = [torch.zeros((1, t), **i32) for t in self.totals]
-        self._tables: list[torch.Tensor] = [torch.zeros((5, MAX_SEGMENTS + 1), **i32) for _ in range(4)]
+        # All per-level ids and the 4 FPS tables live in ONE device buffer (graph-static views), refilled per frame
+        # with one pinned host->device copy (no stream synchronisation).
+        width = MAX_SEGMENTS + 1
+        self._table_size = 5 * width
+        self._flat = torch.zeros(sum(self.totals) + 4 * self._table_size, **i32)
+        views, offset = [], 0
+        for t in self.totals:
+            views.append(self._flat[offset:offset + t].view(1, t)); offset += t
+        self.ids: list[torch.Tensor] = views
+        self._tables: list[torch.Tensor] = []
+        for _ in range(4):
+            self._tables.append(self._flat[offset:offset + self._table_size].view(5, width)); offset += self._table_size
         self.fps: list[tuple] = []
+        for l in range(4):
+            t = self._tables[l]
+            # (offsets, counts, out_offsets, npoints, identity, total_out, max_count, max_npoint); the host ints
+            # are graph properties valid for every layout of this shape. max_count bounds the size of a SAMPLED
+            # segment (FPS vector width): level 0 only samples objects above level1_points (<= N0); from level 1 on
+            # an object has at most level_sizes(level1_points)[l] points (the padding segment is never sampled).
+            bound = self.totals[0] if l == 0 else min(self.totals[l], level_sizes(self.level1_points, self.level1_points)[l])
+            self.fps.append((t[0], t[1], t[2], t[3], t[4], self.totals[l + 1], bound, self.totals[l + 1]))
         self.write(counts)
 
     def _level_counts(self, counts):
@@ -100,30 +120,30 @@ class Segments:
             raise ValueError(f"layout {counts} (N0 {n0}, N1 {n1_real}) does not fit this graph "
                              f"(N0 {self.totals[0]}, N1 capacity {self.level1_total})")
         pad = self.level1_total - n1_real
-        # level counts incl. the padding segment (0 level-0 points)
         pad_levels = (0, pad, pad // 2, pad // 4, pad // 16)
+        # level counts incl. the padding segment (0 level-0 points)
         level_counts = [list(lc) + ([pad_levels[l]] if pad else []) for l, lc in enumerate(real)]
         self.counts, self.level_counts = counts, tuple(tuple(lc[:len(counts)]) for lc in level_counts)
         S = len(level_counts[0])
-        for l in range(5):
-            seg = torch.repeat_interleave(torch.arange(S, dtype=torch.int32), torch.tensor(level_counts[l]))
-            self.ids[l][0].copy_(seg.to(self.device, non_blocking=False))
-        self.fps = []
+        width = MAX_SEGMENTS + 1
+        parts = [np.repeat(np.arange(S, dtype=np.int32), level_counts[l]) for l in range(5)]
         for l in range(4):
-            lc, nxt = level_counts[l], level_counts[l + 1]
-            rows = torch.zeros((5, MAX_SEGMENTS + 1), dtype=torch.int32)
-            rows[0, :S] = torch.tensor([sum(lc[:i]) for i in range(S)])
-            rows[1, :S] = torch.tensor(lc)
-            rows[2, :S] = torch.tensor([sum(nxt[:i]) for i in range(S)])
-            rows[3, :S] = torch.tensor(nxt)
-            rows[4, :S] = torch.tensor([int(l == 0 and a == b) for a, b in zip(lc, nxt)])   # identity level 1
-            if pad and l == 0:
-                rows[0, S - 1], rows[1, S - 1] = 0, n0      # the padding segment samples the whole input
-            self._tables[l].copy_(rows.to(self.device))
-            t = self._tables[l]
-            # (offsets, counts, out_offsets, npoints, identity, total_out, max_count, max_npoint); the host ints
-            # are graph properties (maxima over all layouts of this shape: the level totals bound them).
-            self.fps.append((t[0], t[1], t[2], t[3], t[4], self.totals[l + 1], self.totals[l], self.totals[l + 1]))
+            lc, nxt = np.asarray(level_counts[l]), np.asarray(level_counts[l + 1])
+            rows = np.zeros((5, width), dtype=np.int32)
+            rows[0, :S] = np.concatenate(([0], np.cumsum(lc)[:-1]))
+            rows[1, :S] = lc
+            rows[2, :S] = np.concatenate(([0], np.cumsum(nxt)[:-1]))
+            rows[3, :S] = nxt
+            rows[4, :S] = (lc == nxt) if l == 0 else 0                 # identity level 1
+            if pad:
+                rows[4, S - 1] = 1                                     # the padding segment is a prefix copy, never sampled
+                if l == 0:
+                    rows[0, S - 1], rows[1, S - 1] = 0, n0             # ... of the first input points
+            parts.append(rows.reshape(-1))
+        host = torch.from_numpy(np.concatenate(parts))
+        if self._flat.is_cuda:
+            host = host.pin_memory()
+        self._flat.copy_(host, non_blocking=True)
 
     @property
     def num_segments(self) -> int:
