@@ -88,6 +88,30 @@ def subset_knn_context(
     return sub_indices, sub_relative
 
 
+# Pyramid of an N-point input. N >= REFERENCE_POINTS: (N, level1_points, 512, 256, 64) as trained (level 1 is the
+# input itself at N = 1024). Smaller inputs (small objects) use the same pyramid scaled by N / 1024:
+# (N, N, N/2, N/4, N/16), so no point has to be duplicated to reach 1024. MIN_INPUT_POINTS keeps the coarsest
+# neighbourhood searches (32 neighbours) inside the level they search: level 3 has N/4 >= 64 points.
+REFERENCE_POINTS = 1024
+MIN_INPUT_POINTS = 256
+INPUT_POINT_MULTIPLE = 16
+
+
+def check_input_points(n: int) -> None:
+    if n < MIN_INPUT_POINTS or n % INPUT_POINT_MULTIPLE:
+        raise ValueError(
+            f"DifFlow3D needs an input of at least {MIN_INPUT_POINTS} points, a multiple of "
+            f"{INPUT_POINT_MULTIPLE}; got {n}."
+        )
+
+
+def coarse_level_sizes(n: int) -> tuple[int, int, int]:
+    """Sizes of pyramid levels 2..4 for an n-point input."""
+    if n >= REFERENCE_POINTS:
+        return 512, 256, 64
+    return n // 2, n // 4, n // 16
+
+
 class PointConvEncoder(nn.Module):
     """Original encoder with an exact eval-only level0/level1 KNN reuse path."""
 
@@ -221,15 +245,17 @@ class PointConvEncoder(nn.Module):
         feat_l0_1 = self.level0_1(feat_l0)
 
         # Level 1 has level1.npoint points (fork default 1024; the upstream
-        # model samples 2048). A 1024-point input is used as level 1 directly,
-        # reusing the level-0 neighborhood (exact only then). For larger
+        # model samples 2048). An input of at most 1024 points is used as level 1
+        # directly, reusing the level-0 neighborhood (exact only then). For larger
         # deployment inputs (e.g. 2048), run the original PointConvD
         # downsampling so recurrent1 stays at level1.npoint.
-        if xyz.shape[2] == 1024:
+        point_count = int(xyz.shape[2])
+        size_l2, size_l3, size_l4 = coarse_level_sizes(point_count)
+        if point_count <= REFERENCE_POINTS:
             pc_l1 = xyz
             fps_l1 = self._identity_fps_indices(
                 xyz.shape[0],
-                1024,
+                point_count,
                 xyz.device,
             )
             feat_l1 = _pointconv_from_context(
@@ -240,7 +266,6 @@ class PointConvEncoder(nn.Module):
             )
         else:
             fps_idx = None
-            point_count = int(xyz.shape[2])
             if point_count < int(self.level1.npoint):
                 raise ValueError(
                     f"Level 1 samples {self.level1.npoint} points; inputs other "
@@ -266,6 +291,7 @@ class PointConvEncoder(nn.Module):
         pc_l2, feat_l2, fps_l2 = self.level2(
             pc_l1,
             feat_l1_2,
+            npoint=size_l2,
         )
         feat_l2 = self.level2_0(feat_l2)
         feat_l2_3 = self.level2_1(feat_l2)
@@ -273,6 +299,7 @@ class PointConvEncoder(nn.Module):
         pc_l3, feat_l3, fps_l3 = self.level3(
             pc_l2,
             feat_l2_3,
+            npoint=size_l3,
         )
         feat_l3 = self.level3_0(feat_l3)
         feat_l3_4 = self.level3_1(feat_l3)
@@ -280,6 +307,7 @@ class PointConvEncoder(nn.Module):
         pc_l4, feat_l4, fps_l4 = self.level4(
             pc_l3,
             feat_l3_4,
+            npoint=size_l4,
         )
 
         self._last_level0_context = (indices, relative_xyz)
@@ -301,9 +329,5 @@ class PointConvEncoder(nn.Module):
             raise RuntimeError(
                 "This minimal model is inference-only. Call model.eval()."
             )
-        if xyz.shape[2] < 1024:
-            raise ValueError(
-                "The optimized deployment model requires at least "
-                f"1024 points, received {xyz.shape[2]}."
-            )
+        check_input_points(int(xyz.shape[2]))
         return self._forward_eval(xyz, color)

@@ -7,6 +7,7 @@ import math
 
 import torch
 
+from difflow3d.model.encoder import INPUT_POINT_MULTIPLE, MIN_INPUT_POINTS, check_input_points
 from difflow3d.ops.pointnet2 import pointnet2_utils
 from .voxel_outlier import (
     CudaVoxelComponentOutlierFilter,
@@ -82,13 +83,14 @@ class AdaptivePointPreprocessor:
         point_buckets: tuple[int, ...] | list[int] | None = None,
         sort_anchors_morton: bool = False,
     ) -> None:
-        if num_points < 1024:
-            raise ValueError("DifFlow3D requires num_points >= 1024.")
+        check_input_points(int(num_points))
         buckets = sorted({int(value) for value in (point_buckets or (num_points,))})
-        if buckets[0] < 1024 or buckets[-1] > num_points:
+        for bucket in buckets:
+            check_input_points(bucket)
+        if buckets[-1] > num_points:
             raise ValueError(
-                "point_buckets must lie in [1024, num_points]; "
-                f"got {buckets} with num_points={num_points}."
+                f"point_buckets must lie in [{MIN_INPUT_POINTS}, num_points] (multiples of "
+                f"{INPUT_POINT_MULTIPLE}); got {buckets} with num_points={num_points}."
             )
         if second_base_voxel_size_m <= 0.0:
             raise ValueError("second_base_voxel_size_m must be positive.")
@@ -838,10 +840,10 @@ class AdaptivePointPreprocessor:
     ) -> PreparedModelInput:
         target = int(anchors.shape[0])
         # Metadata-only checks; no CUDA synchronization.
-        if anchors.shape != (target, 3) or target < 1024:
+        if anchors.shape != (target, 3) or target < MIN_INPUT_POINTS:
             raise RuntimeError(
                 f"Preprocessing produced {tuple(anchors.shape)}; DifFlow3D "
-                "model input must be [N>=1024, 3]."
+                f"model input must be [N>={MIN_INPUT_POINTS}, 3]."
             )
         final_indices = candidate_indices.index_select(
             0, local_indices

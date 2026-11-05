@@ -356,9 +356,9 @@ class PointConvD(nn.Module):
 
         self.relu = nn.ReLU(inplace=True) if not use_leaky else nn.LeakyReLU(LEAKY_RATE, inplace=True)
 
-    def forward(self, xyz, points, fps_idx=None, new_xyz=None):
+    def forward(self, xyz, points, fps_idx=None, new_xyz=None, npoint=None):
         """
-        PointConv with downsampling.
+        PointConv with downsampling to ``npoint`` points (default: the constructor's npoint).
         Input:
             xyz: input points position data, [B, C, N]
             points: input points data, [B, D, N]
@@ -368,12 +368,13 @@ class PointConvD(nn.Module):
         """
         B = xyz.shape[0]
         N = xyz.shape[2]
+        npoint = self.npoint if npoint is None else int(npoint)
         xyz = xyz.permute(0, 2, 1).contiguous()
         points = points.permute(0, 2, 1)
 
         if new_xyz is None:
             if fps_idx is None:
-                fps_idx = pointnet2_utils.furthest_point_sample(xyz, self.npoint)
+                fps_idx = pointnet2_utils.furthest_point_sample(xyz, npoint)
             new_xyz = index_points_gather(xyz, fps_idx)
         else:
             new_xyz = new_xyz.permute(0, 2, 1)
@@ -382,7 +383,7 @@ class PointConvD(nn.Module):
         grouped_xyz = grouped_xyz_norm.permute(0, 3, 2, 1)
         weights = self.weightnet(grouped_xyz)
         # B, N, S, C
-        new_points = torch.matmul(input=new_points.permute(0, 1, 3, 2), other = weights.permute(0, 3, 2, 1)).view(B, self.npoint, -1)
+        new_points = torch.matmul(input=new_points.permute(0, 1, 3, 2), other = weights.permute(0, 3, 2, 1)).view(B, new_xyz.shape[1], -1)
         new_points = self.linear(new_points)
         if self.bn:
             new_points = self.bn_linear(new_points.permute(0, 2, 1))

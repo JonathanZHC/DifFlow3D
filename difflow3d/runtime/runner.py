@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import torch
 
 from difflow3d.model import EncodedFrame, PointConvBidirection
+from difflow3d.model.encoder import check_input_points
 from .normalization import AnchoredNormalization, Transform
 from .preprocessing import (
     AdaptivePointPreprocessor,
@@ -101,11 +102,9 @@ class DifFlow3DStreamingCudaGraphRunner:
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("Streaming CUDA Graph inference requires CUDA.")
-        if batch_size < 1 or num_points < 1024 or warmup < 1:
-            raise ValueError(
-                "The optimized streaming runner requires num_points >= 1024 "
-                "and positive batch_size/warmup."
-            )
+        if batch_size < 1 or warmup < 1:
+            raise ValueError("The optimized streaming runner requires positive batch_size/warmup.")
+        check_input_points(int(num_points))
         if second_base_voxel_size_m <= 0.0:
             raise ValueError("second_base_voxel_size_m must be positive.")
         if second_candidate_ratio <= 1.0:
