@@ -26,6 +26,11 @@ class PreprocessTimingEvents:
     after_exact_count: torch.cuda.Event
 
 
+# Voxel-2 per object (frames with object ids): objects up to this many first-stage points are not thinned.
+SMALL_OBJECT_POINTS = 1024
+KEEP_WHOLE_VOXEL_M = 1.0e-4     # far below the tracker voxel: every first-stage point is its own voxel
+
+
 @dataclass(frozen=True)
 class PreparedModelInput:
     world_points: torch.Tensor
@@ -244,7 +249,7 @@ class AdaptivePointPreprocessor:
     @staticmethod
     def _voxel_downsample(
         points: torch.Tensor,
-        voxel_size: float,
+        voxel_size: float | torch.Tensor,
         point_ids: torch.Tensor | None = None,
     ) -> tuple[
         torch.Tensor,
@@ -256,7 +261,10 @@ class AdaptivePointPreprocessor:
         torch.Tensor,
         torch.Tensor,
     ]:
-        coordinates = torch.floor(points / float(voxel_size)).to(torch.int64)
+        # voxel_size: one resolution, or one per point ([N,1], small objects kept whole: _object_voxel_sizes)
+        if not torch.is_tensor(voxel_size):
+            voxel_size = float(voxel_size)
+        coordinates = torch.floor(points / voxel_size).to(torch.int64)
         spatial_shifted = coordinates - coordinates.amin(dim=0)
         spatial_extents = spatial_shifted.amax(dim=0) + 1
         voxel_ids = (
@@ -367,7 +375,7 @@ class AdaptivePointPreprocessor:
 
         for _ in range(self._second_auto_iterations):
             candidate_points, _, _, _, _, _, _, _ = self._voxel_downsample(
-                points, resolution, point_ids
+                points, self._object_voxel_sizes(points, point_ids, resolution), point_ids
             )
             candidate_count = int(candidate_points.shape[0])
             trials.append(
@@ -424,6 +432,24 @@ class AdaptivePointPreprocessor:
         self._second_calibration = report
         return report
 
+    @staticmethod
+    def _object_voxel_sizes(points: torch.Tensor, point_ids: torch.Tensor | None, resolution: float):
+        """Voxel-2 resolution per point: objects with at most SMALL_OBJECT_POINTS first-stage points keep all of
+        them (a resolution far below the tracker voxel), so the scene-wide resolution, set by the large objects,
+        cannot thin a small object to a few dozen points before its own anchor budget is allocated
+        (segmentation.allocate_targets). Device-only (no sync); one cloud (no ids): the plain resolution."""
+        if point_ids is None:
+            return float(resolution)
+        ids = point_ids.to(torch.int64)
+        sorted_ids, order = torch.sort(ids)
+        new = torch.ones_like(sorted_ids, dtype=torch.int64)
+        new[1:] = (sorted_ids[1:] != sorted_ids[:-1]).to(torch.int64)
+        rank = torch.cumsum(new, 0) - 1
+        per_rank = torch.zeros_like(rank).index_add_(0, rank, torch.ones_like(rank))
+        count = torch.empty_like(rank).scatter_(0, order, per_rank.index_select(0, rank))
+        small = (count <= SMALL_OBJECT_POINTS).unsqueeze(1)
+        return torch.where(small, KEEP_WHOLE_VOXEL_M, float(resolution)).to(points.dtype)
+
     def _second_downsample(
         self,
         points: torch.Tensor,
@@ -466,7 +492,7 @@ class AdaptivePointPreprocessor:
         ) = (
             self._voxel_downsample(
                 points,
-                self.second_voxel_size_m,
+                self._object_voxel_sizes(points, point_ids, self.second_voxel_size_m),
                 point_ids,
             )
         )

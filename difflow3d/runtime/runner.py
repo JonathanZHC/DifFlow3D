@@ -266,6 +266,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._current_scale_points: torch.Tensor | None = None
         self._current_center_points: torch.Tensor | None = None
         self.reencode_count = 0
+        self.reencode_reasons: dict[str, int] = {}     # re-encodes by cause (graph / bucket / renormalize)
 
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
@@ -640,11 +641,15 @@ class DifFlow3DStreamingCudaGraphRunner:
             # Both frames of a pair run one graph and share one transform: a frame encoded in another graph (bucket
             # or level-1 capacity), at another bucket, or before a re-anchor is re-staged (one extra encode).
             renormalize = (self.normalization is not None and self.normalization.restage_previous and changed)
-            if (graphs is not self._slot_graphs[previous] or previous_prepared is not self._slot_prepared[previous]
-                    or renormalize):
+            reasons = [name for name, hit in (("graph", graphs is not self._slot_graphs[previous]),
+                                              ("bucket", previous_prepared is not self._slot_prepared[previous]),
+                                              ("renormalize", renormalize)) if hit]
+            if reasons:
                 self._stage_into(previous, previous_prepared, graphs, record_profile=False, transform=transform)
                 self._pending_reencode_slot = previous
                 self.reencode_count += 1
+                for name in reasons:
+                    self.reencode_reasons[name] = self.reencode_reasons.get(name, 0) + 1
         self._pair_bucket = bucket
         self._pair_graphs = graphs
         self._stage_into(slot, prepared, graphs, record_profile=True, transform=transform)
