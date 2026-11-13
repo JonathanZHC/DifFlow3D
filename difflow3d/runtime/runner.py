@@ -74,6 +74,9 @@ class DifFlow3DStreamingCudaGraphRunner:
         scale input is a static device tensor refreshed by an on-device fill.
     """
 
+    # False: a private memory pool per captured graph (the former behaviour; only to compare against).
+    SHARE_GRAPH_POOLS = True
+
     def __init__(
         self,
         model: PointConvBidirection,
@@ -237,8 +240,23 @@ class DifFlow3DStreamingCudaGraphRunner:
         self._profile_active = False
         self._profile_events: list[_ProfileEventPair] = []
 
-        for bucket in self._buckets.values():
-            self._capture(bucket, int(warmup))
+        # CUDA graph memory: one pool per graph role, shared by the graphs of every bucket, instead of a private pool
+        # per graph (4 graphs x every bucket, all kept although one bucket runs at a time: 4.80 GiB for the buckets
+        # 256 ... 8192 with the uncertainty head, 1.19 GiB shared; outputs bit-identical, same cycle time). Sharing lets a graph's scratch memory overlap another bucket's OUTPUTS of the same
+        # role, which is safe here because
+        #   * a pair always decodes encodings of its own bucket made after the last switch to it: _slot_bucket marks
+        #     a slot whose encoding is of another bucket and stage_world re-encodes it (encode roles);
+        #   * a decode's outputs are read before that role replays again, exactly as with one bucket (decode roles);
+        #   * the roles keep separate pools: the a / b encodings alternate and both are alive while a pair decodes,
+        #     and the ab / ba outputs keep their one-cycle overlap.
+        # Captured largest first, so the smaller buckets fit into the memory the largest reserved.
+        self._graph_pools = (
+            {role: torch.cuda.graph_pool_handle() for role in ("encode_a", "encode_b", "decode_ab", "decode_ba")}
+            if self.SHARE_GRAPH_POOLS
+            else None
+        )
+        for count in sorted(self._buckets, reverse=True):
+            self._capture(self._buckets[count], int(warmup))
 
     # Legacy single-size accessors (largest bucket).
     @property
@@ -312,20 +330,23 @@ class DifFlow3DStreamingCudaGraphRunner:
         current.wait_stream(setup)
         torch.cuda.synchronize(self.device)
 
+    def _graph_pool(self, role: str):
+        return None if self._graph_pools is None else self._graph_pools[role]
+
     def _capture(self, bucket: _BucketGraphs, warmup: int) -> None:
         # RNG initialization deliberately occurs outside CUDA graph capture.
         bucket.input_a.normal_(0.0, 0.25)
         bucket.input_b.normal_(0.0, 0.25)
         self._warmup(bucket, warmup)
 
-        with torch.cuda.graph(bucket.encode_graph_a):
+        with torch.cuda.graph(bucket.encode_graph_a, pool=self._graph_pool("encode_a")):
             with torch.inference_mode():
                 bucket.encoded_a = self.model.encode_frame(
                     bucket.input_a,
                     bucket.input_a,
                 )
 
-        with torch.cuda.graph(bucket.encode_graph_b):
+        with torch.cuda.graph(bucket.encode_graph_b, pool=self._graph_pool("encode_b")):
             with torch.inference_mode():
                 bucket.encoded_b = self.model.encode_frame(
                     bucket.input_b,
@@ -339,7 +360,7 @@ class DifFlow3DStreamingCudaGraphRunner:
         assert bucket.encoded_a is not None
         assert bucket.encoded_b is not None
 
-        with torch.cuda.graph(bucket.decode_graph_ab):
+        with torch.cuda.graph(bucket.decode_graph_ab, pool=self._graph_pool("decode_ab")):
             with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ab = self.model.decode_pair(
                     bucket.encoded_a,
@@ -357,7 +378,7 @@ class DifFlow3DStreamingCudaGraphRunner:
                 if self.uncertainty_head is not None:
                     bucket.chol_ab = self._flow_cholesky(bucket.input_a, bucket.flow_ab)
 
-        with torch.cuda.graph(bucket.decode_graph_ba):
+        with torch.cuda.graph(bucket.decode_graph_ba, pool=self._graph_pool("decode_ba")):
             with torch.inference_mode(), self._head_input_capture():
                 bucket.output_ba = self.model.decode_pair(
                     bucket.encoded_b,
